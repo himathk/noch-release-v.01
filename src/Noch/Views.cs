@@ -6,6 +6,7 @@ using System.Windows.Media;
 using System.Windows.Shapes;
 using Noch.Core;
 using static Noch.Theme;
+using Dock = System.Windows.Controls.Dock;
 
 namespace Noch;
 
@@ -17,6 +18,8 @@ interface IHost
     IReadOnlyList<SetupItem> Setup { get; }
     /// False for a moment after a card drops, so a click meant for something else cannot approve anything.
     bool Armed { get; }
+    /// On the left or right edge, where bars stand upright.
+    bool Vertical { get; }
     void OpenPeek();
     void OpenPlayer();
     void Dismiss();
@@ -47,21 +50,32 @@ abstract class View : ContentControl
 
 sealed class RestView : View
 {
-    public RestView(IHost h, bool hidden) : base(h) { W = 120; Height = hidden ? 0 : 6; Radius = 6; Ear = hidden ? 0 : 4; }
+    public RestView(IHost h, bool hidden) : base(h)
+    {
+        double length = 120, depth = hidden ? 0 : 6;
+        W = h.Vertical ? depth : length; Height = h.Vertical ? length : depth; Radius = 6; Ear = hidden ? 0 : 4;
+    }
     public override bool ClickThrough => true;
 }
 
 sealed class StripView : View
 {
     readonly GapPanel _bars = Row(5);
-    public StripView(IHost h) : base(h) { W = 60; Height = 9; Radius = 8; Ear = 5; Content = _bars; _bars.HorizontalAlignment = HorizontalAlignment.Center; Update(); }
+    public StripView(IHost h) : base(h)
+    {
+        W = h.Vertical ? 9 : 60; Height = h.Vertical ? 60 : 9; Radius = 8; Ear = 5;
+        _bars.Orientation = h.Vertical ? Orientation.Vertical : Orientation.Horizontal;
+        _bars.HorizontalAlignment = HorizontalAlignment.Center; _bars.VerticalAlignment = VerticalAlignment.Center;
+        Content = _bars;
+        Update();
+    }
     public override bool ClickThrough => true;
     public double Wanted { get; private set; }
 
     public override void Update()
     {
         _bars.Children.Clear();
-        void Add(Brush b) => _bars.Children.Add(new Rectangle { Width = 28, Height = 3, RadiusX = 1.5, RadiusY = 1.5, Fill = b });
+        void Add(Brush b) => _bars.Children.Add(new Rectangle { Width = Host.Vertical ? 3 : 28, Height = Host.Vertical ? 28 : 3, RadiusX = 1.5, RadiusY = 1.5, Fill = b });
         foreach (var s in Presenter.Ordered(Host.Hub.Sessions.Where(Presenter.Active)).Take(6)) Add(Presenter.NeedsYou(s) ? Need : Text);
         if (Host.Media.Current is { Playing: true } m) Add(Theme.Brush(m.Tint));
         Wanted = Math.Max(1, _bars.Children.Count) * 33 + 41;
@@ -79,6 +93,8 @@ sealed class CompactView : View
     public CompactView(IHost h, bool agent, bool music) : base(h)
     {
         (_agent, _music) = (agent, music);
+        MouseLeftButtonUp += (_, e) => { if (!e.Handled) { if (_agent) h.OpenPeek(); else h.OpenPlayer(); } };
+        if (h.Vertical) { W = 44; Radius = 16; Ear = 8; Upright(); Update(); return; }
         W = agent && music ? 364 : 300; Height = 36; Radius = 14; Ear = 8;
         UIElement? left, right; UIElement mid;
         if (agent)
@@ -100,8 +116,18 @@ sealed class CompactView : View
         var bar = Bar(left, mid, right, 10);
         bar.Margin = new Thickness(12, 0, 12, 0); bar.VerticalAlignment = VerticalAlignment.Center;
         Content = new Border { Background = Brushes.Transparent, Height = 36, Child = bar };
-        MouseLeftButtonUp += (_, e) => { if (!e.Handled) { if (_agent) h.OpenPeek(); else h.OpenPlayer(); } };
         Update(); Tick();
+    }
+
+    /// On a side edge there is no room for words, so only the dots, the bars and the cover stand there.
+    void Upright()
+    {
+        var col = Col(10);
+        col.HorizontalAlignment = HorizontalAlignment.Center;
+        if (_agent) { col.Children.Add(_dots); _more.HorizontalAlignment = HorizontalAlignment.Center; col.Children.Add(_more); }
+        if (_music) { col.Children.Add(_eq); col.Children.Add(Tap(_cover, Host.OpenPlayer)); }
+        col.Margin = new Thickness(0, 14, 0, 14);
+        Content = new Border { Background = Brushes.Transparent, Child = col };
     }
 
     static UIElement Tap(UIElement e, Action a)
@@ -121,6 +147,7 @@ sealed class CompactView : View
             _label.Text = s.Label;
             var n = Host.Hub.Sessions.Count(Presenter.Active) - 1 + s.Subagents.Count;
             _more.Text = n > 0 ? "+" + n : "";
+            _more.Visibility = n > 0 ? Visibility.Visible : Visibility.Collapsed;
         }
         if (_music && Host.Media.Current is { } m)
         {

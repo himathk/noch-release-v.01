@@ -8,9 +8,11 @@ sealed class Settings
 {
     public bool AlwaysFull { get; set; }
     public bool Welcomed { get; set; }
+    /// Which edge or corner it was dropped on.
+    public string? Dock { get; set; }
 
     /// Kept outside the install folder, which is replaced on every update.
-    public static string Folder { get; } = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Noch");
+    public static string Folder { get; } = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), Program.Name);
     public static string HookExe => Path.Combine(Folder, "noch-hook.exe");
     static string FilePath => Path.Combine(Folder, "settings.json");
 

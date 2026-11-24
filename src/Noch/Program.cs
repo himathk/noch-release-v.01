@@ -11,6 +11,13 @@ namespace Noch;
 
 static class Program
 {
+    /// Debug copies can run beside an installed one without sharing anything.
+#if DEBUG
+    public static readonly string Name = Environment.GetEnvironmentVariable("NOCH_DEV") is { Length: > 0 } ? "Noch-dev" : "Noch";
+#else
+    public const string Name = "Noch";
+#endif
+
     [STAThread]
     static void Main(string[] args)
     {
@@ -19,7 +26,7 @@ static class Program
         if (args is ["--shots", var dir]) { Shots.Run(dir); return; }
         if (args is ["--icon", var ico]) { Shots.Icon(ico); return; }
 #endif
-        using var only = new Mutex(true, @"Local\Noch", out var first);
+        using var only = new Mutex(true, @"Local\" + Name, out var first);
         // Opening Noch a second time shows the one that is already running.
         if (!first) { Show.Set(); return; }
 
@@ -30,11 +37,11 @@ static class Program
         only.ReleaseMutex();
     }
 
-    static readonly EventWaitHandle Show = new(false, EventResetMode.AutoReset, @"Local\Noch-show"), Leave = new(false, EventResetMode.AutoReset, @"Local\Noch-quit");
+    static readonly EventWaitHandle Show = new(false, EventResetMode.AutoReset, @"Local\" + Name + "-show"), Leave = new(false, EventResetMode.AutoReset, @"Local\" + Name + "-quit");
 
     static void AskRunningToQuit()
     {
-        using var only = new Mutex(false, @"Local\Noch");
+        using var only = new Mutex(false, @"Local\" + Name);
         Leave.Set();
         try { if (only.WaitOne(5000)) only.ReleaseMutex(); } catch (AbandonedMutexException) { }
         Leave.Reset();
@@ -84,7 +91,7 @@ static class Program
         public void Start()
         {
             Settings.InstallHook();
-            _server = new HookServer(_hub);
+            _server = new HookServer(_hub, Name == "Noch" ? null : "noch-dev");
             _server.Start();
             _media = new MediaService();
             _window = new NotchWindow(_hub, _media, _settings) { SetupItems = SetupItems };
@@ -94,6 +101,26 @@ static class Program
             if (!_settings.Welcomed) { _settings.Welcomed = true; _settings.Save(); _window.Welcome(); }
             Listen(Show, _window.Welcome);
             Listen(Leave, Quit);
+#if DEBUG
+            if (Environment.GetEnvironmentVariable("NOCH_DEMO") is { Length: > 0 })
+            {
+                var step = 0;
+                var demo = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3.5) };
+                demo.Tick += (_, _) =>
+                {
+                    double w = SystemParameters.WorkArea.Width, h = SystemParameters.WorkArea.Height;
+                    switch (step++)
+                    {
+                        case 0: _window.DemoDrag((0, w / 2, 18), (.5, w / 2, 260), (1.1, w - 300, 500), (1.4, w - 60, 520)); break;
+                        case 1: _window.DemoDrag((0, w - 20, 520), (.5, w - 260, 620), (1.0, w / 2, h - 300), (1.3, w / 2 + 30, h - 60)); break;
+                        case 2: _window.DemoDrag((0, w / 2, h - 18), (.4, w / 2, h - 220), (1.0, 300, 300), (1.3, 40, 30)); break;
+                        case 3: _window.DemoDrag((0, 150, 18), (.4, 200, 80)); break; // not far enough: springs back
+                        case 4: demo.Stop(); break;
+                    }
+                };
+                demo.Start();
+            }
+#endif
             StartUpdates();
         }
 
@@ -138,6 +165,7 @@ static class Program
                 menu.Items.Add(new Forms.ToolStripSeparator());
                 Item("Start with Windows", () => Settings.StartsWithWindows = !Settings.StartsWithWindows, Settings.StartsWithWindows);
                 Item("Show the full bar over windows", () => { _settings.AlwaysFull = !_settings.AlwaysFull; _settings.Save(); _window!.Sync(); }, _settings.AlwaysFull);
+                Item("Move back to the top", () => _window!.BackToTop(), enabled: _window!.Moved);
                 menu.Items.Add(new Forms.ToolStripSeparator());
                 if (_ready != null) Item("Restart to update", () => _updates!.ApplyUpdatesAndRestart(_ready));
                 Item("Quit", Quit);

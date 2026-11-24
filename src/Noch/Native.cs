@@ -40,6 +40,11 @@ static class Native
     [DllImport("kernel32")] static extern bool CloseHandle(IntPtr h);
     delegate bool EnumProc(IntPtr h, IntPtr l);
 
+    /// The button people drag with, even when the mouse is set up left-handed.
+    public static int PrimaryButton => GetSystemMetrics(23) != 0 ? 2 : 1;
+    [DllImport("user32")] static extern int GetSystemMetrics(int i);
+    public static void Move(IntPtr h, int x, int y) => SetWindowPos(h, IntPtr.Zero, x, y, 0, 0, 0x1 | 0x4 | 0x10);
+
     public static void KeepOnTop(IntPtr h) => SetWindowPos(h, new IntPtr(-1), 0, 0, 0, 0, 0x1 | 0x2 | 0x10);
 
     public static void SetExStyle(IntPtr h, int flag, bool on)
@@ -63,11 +68,10 @@ static class Native
         return i.rcMonitor;
     }
 
-    /// What lies under the notch: nothing, a normal window, or something fullscreen.
-    public static (bool Covered, bool Fullscreen) ProbeTop(IntPtr self)
+    /// What lies under a point: nothing, a normal window, or something fullscreen.
+    public static (bool Covered, bool Fullscreen) Probe(IntPtr self, int cx, int cy)
     {
         var m = PrimaryMonitor();
-        int cx = (m.Left + m.Right) / 2, cy = m.Top + 12;
         var result = (false, false);
         var cls = new StringBuilder(64);
         EnumWindows((h, _) =>

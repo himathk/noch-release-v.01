@@ -43,6 +43,18 @@ static class Shots
             _ = hub.HandleAsync(E("p", "SubagentStart", @"D:\Work\portfolio", "\"agent_id\":\"a\""));
             _ = hub.HandleAsync(E("p", "SubagentStart", @"D:\Work\portfolio", "\"agent_id\":\"b\""));
             Shot("04-both", new CompactView(w, true, true));
+            foreach (var (name, dock) in new[] { ("left", new Noch.Core.Dock(Side.Left, .5)), ("right", new Noch.Core.Dock(Side.Right, .3)) })
+            {
+                w.SetDockForPicture(dock);
+                Shot("20-" + name, new CompactView(w, true, true));
+            }
+            foreach (var (name, dock) in new[] { ("bottom", new Noch.Core.Dock(Side.Bottom, .5)), ("corner-tl", new Noch.Core.Dock(Side.Top, 0)), ("corner-tr", new Noch.Core.Dock(Side.Top, 1)), ("corner-br", new Noch.Core.Dock(Side.Bottom, 1)) })
+            {
+                w.SetDockForPicture(dock);
+                Shot("20-" + name, new CompactView(w, true, true));
+            }
+            w.SetDockForPicture(Noch.Core.Dock.TopCentre);
+            Film(Path.Combine(dir, "30-drag.png"));
             _ = hub.HandleAsync(E("c", "postToolUse", @"D:\Work\noch", "\"tool_name\":\"Shell\",\"tool_input\":{\"command\":\"npm test\",\"description\":\"Running tests\"}", "cursor"));
             _ = hub.HandleAsync(E("i", "PermissionRequest", @"D:\Work\shop", "\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"npx prisma migrate deploy\",\"description\":\"Migrate the orders tables\"},\"permission_suggestions\":[{\"type\":\"addRules\",\"rules\":[{\"toolName\":\"Bash\",\"ruleContent\":\"npx prisma migrate:*\"}],\"behavior\":\"allow\",\"destination\":\"localSettings\"}]"));
             foreach (var (k, sec) in new[] { ("claude:i", 8), ("claude:p", 102), ("cursor:c", 31) })
@@ -67,16 +79,52 @@ static class Shots
         app.Run();
     }
 
+    /// A scripted pull off the top edge, break, carry and drop on the right edge, drawn as a strip of frames.
+    static void Film(string path)
+    {
+        var area = new Size(760, 330);
+        var bubble = new Bubble(Noch.Core.Dock.TopCentre, new Box(230, 0, 300, 36), area, 380, 18);
+        var frames = new List<(double T, Action<DrawingContext> Draw)>();
+        var dv = new DrawingVisual();
+        double[] at = [0, .05, .1, .16, .22, .27, .3, .34, .39, .45, .55, .84, .92, .97, 1.03, 1.1];
+        const int cols = 4; const double k = .6;
+        int cell = 0; var t = 0.0;
+        using (var dc = dv.RenderOpen())
+        {
+            foreach (var stop in at)
+            {
+                for (; t < stop && !bubble.Landed; t += 1 / 120.0)
+                {
+                    // pull down, carry right, let go at 0.9 s
+                    var p = t < .4 ? new Point(380, 18 + t / .4 * 200) : new Point(380 + Math.Min(1, (t - .4) / .45) * 300, 200);
+                    if (t > .9) bubble.Release();
+                    bubble.Step(1 / 120.0, p.X, p.Y);
+                }
+                double x = cell % cols * (area.Width + 24), y = cell / cols * (area.Height + 24); cell++;
+                dc.PushClip(new RectangleGeometry(new Rect(x, y, area.Width, area.Height)));
+                dc.DrawRectangle(new LinearGradientBrush(Color.FromRgb(0x79, 0xA9, 0xCF), Color.FromRgb(0xC2, 0xDB, 0xE6), 90), null, new Rect(x, y, area.Width, area.Height));
+                bubble.Draw(dc, -x, -y);
+                dc.DrawText(new FormattedText($"{stop * 1000:0} ms{(bubble.Landed ? " landed" : "")}", System.Globalization.CultureInfo.InvariantCulture, FlowDirection.LeftToRight, new Typeface("Segoe UI"), 26, Brushes.Black, 1), new Point(x + 16, y + area.Height - 46));
+                dc.Pop();
+            }
+        }
+        var root = new DrawingVisual();
+        using (var dc = root.RenderOpen()) { dc.PushTransform(new ScaleTransform(k, k)); dc.DrawDrawing(dv.Drawing); }
+        Write(root, (int)(cols * (area.Width + 24) * k), (int)((at.Length / cols) * (area.Height + 24) * k), 96, path);
+    }
+
     static void Save(NotchWindow w, string path)
     {
         const double k = 2, pad = 20;
-        var size = w.ShellSize;
-        var box = new Size(size.Width + pad * 2, size.Height + pad);
+        // Pad every side except the ones the notch is attached to.
+        var b = w.ShellBody; var d = w.ShellDock; var ear = w.ShellEar;
+        double l = d.Side == Side.Left || d.AtStart ? 0 : pad + ear, r = d.Side == Side.Right || d.AtEnd ? 0 : pad + ear, t = d.Side == Side.Top ? 0 : pad + (d.Vertical ? ear : 0), o = d.Side == Side.Bottom ? 0 : pad + (d.Vertical || d.Corner ? ear : 0);
+        var box = new Size(b.W + l + r, b.H + t + o);
         var dv = new DrawingVisual();
         using (var dc = dv.RenderOpen())
         {
             dc.DrawRectangle(new LinearGradientBrush(Color.FromRgb(0x79, 0xA9, 0xCF), Color.FromRgb(0xC2, 0xDB, 0xE6), 90), null, new Rect(box));
-            dc.DrawRectangle(new VisualBrush(w.ShellElement) { Stretch = Stretch.None, AlignmentX = AlignmentX.Left, AlignmentY = AlignmentY.Top, ViewboxUnits = BrushMappingMode.Absolute, Viewbox = new Rect(w.Width / 2 - box.Width / 2, 0, box.Width, box.Height) }, null, new Rect(box));
+            dc.DrawRectangle(new VisualBrush(w.ShellElement) { Stretch = Stretch.None, AlignmentX = AlignmentX.Left, AlignmentY = AlignmentY.Top, ViewboxUnits = BrushMappingMode.Absolute, Viewbox = new Rect(b.X - l, b.Y - t, box.Width, box.Height) }, null, new Rect(box));
         }
         Write(dv, (int)(box.Width * k), (int)(box.Height * k), 96 * k, path);
     }
