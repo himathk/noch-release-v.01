@@ -36,6 +36,7 @@ static class Shots
             void Shot(string name, View v) { w.ShowForPicture(v); Save(w, Path.Combine(dir, name + ".png")); }
 
             Shot("01-rest", new RestView(w, false));
+            Shot("02-idle", new CompactView(w, false, false));
             Shot("02-music", new CompactView(w, false, true));
             _ = hub.HandleAsync(E("p", "UserPromptSubmit", @"D:\Work\portfolio"));
             _ = hub.HandleAsync(E("p", "PreToolUse", @"D:\Work\portfolio", "\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"src/auth.ts\"}"));

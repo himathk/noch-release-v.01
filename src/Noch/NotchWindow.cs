@@ -108,14 +108,15 @@ sealed class NotchWindow : Window, IHost
         _tick.Tick += (_, _) => OnTick();
         _poll.Tick += (_, _) => Poll();
         _openSoon.Tick += (_, _) => { _openSoon.Stop(); if (_shell.IsMouseOver && Hoverable) OpenPeek(); };
-        _shell.MouseEnter += (_, _) => { if (Hoverable) _openSoon.Start(); };
+        // Wait a little longer over a window, where the pointer may only be passing on its way to a tab.
+        _shell.MouseEnter += (_, _) => { if (Hoverable) { _openSoon.Interval = TimeSpan.FromMilliseconds(_covered ? 350 : 150); _openSoon.Start(); } };
         _shell.MouseLeave += (_, _) => _openSoon.Stop();
         SizeChanged += (_, _) => _shell.Refresh();
         SystemEvents.DisplaySettingsChanged += (_, _) => Dispatcher.BeginInvoke(Place);
         DpiChanged += (_, _) => Dispatcher.BeginInvoke(Place);
     }
 
-    bool Hoverable => State is NotchState.Agent or NotchState.Both or NotchState.Music;
+    bool Hoverable => State is NotchState.Idle or NotchState.Agent or NotchState.Both or NotchState.Music;
 
     protected override void OnSourceInitialized(EventArgs e)
     {
@@ -173,13 +174,13 @@ sealed class NotchWindow : Window, IHost
 
     // ---- what to show ----
 
-    bool MusicVisible => Media.Current is { } m && (m.Playing || DateTime.UtcNow - Media.LastPlaying < TimeSpan.FromSeconds(10));
+    bool MusicVisible => Media.Current is { } m && (!_settings.Shrink || m.Playing || DateTime.UtcNow - Media.LastPlaying < TimeSpan.FromSeconds(10));
 
     public void Sync()
     {
         if (_hwnd == IntPtr.Zero) return;
         if (_player && Media.Current is null) _player = false;
-        State = Presenter.Choose(Hub, new Scene(_fullscreen, _covered && !_settings.AlwaysFull, MusicVisible, _peek, _player));
+        State = Presenter.Choose(Hub, new Scene(_fullscreen, _covered, MusicVisible, _peek, _player, _settings.Shrink));
         var pending = Hub.Pending.FirstOrDefault();
         var key = State switch
         {
@@ -194,6 +195,7 @@ sealed class NotchWindow : Window, IHost
                 NotchState.Hidden => new RestView(this, true),
                 NotchState.Rest => new RestView(this, false),
                 NotchState.Strip => new StripView(this),
+                NotchState.Idle => new CompactView(this, false, false),
                 NotchState.Music => new CompactView(this, false, true),
                 NotchState.Agent => new CompactView(this, true, false),
                 NotchState.Both => new CompactView(this, true, true),

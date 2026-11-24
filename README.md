@@ -2,7 +2,7 @@
 
 A notch for Windows that shows what your AI agents are doing and what is playing.
 
-It hangs off the top edge of the screen. Most of the time it is a thin black lip. It grows when an agent starts working or a track plays, and drops open only when an agent is waiting on you. Amber always means "you need to act".
+It hangs off the top edge of the screen as a small bar, and drops open only when an agent is waiting on you. Amber always means "you need to act".
 
 <p align="center"><img src="docs/peek.png" width="540" alt="Noch open, listing three agents and the current track"></p>
 
@@ -27,7 +27,7 @@ Works on Windows 10 (1809 or later) and Windows 11, 64-bit. Noch checks for upda
 | <img src="docs/question.png" width="420" alt="Question card"> | **Questions.** Pick an option or type your own answer. |
 | <img src="docs/player.png" width="420" alt="Player"> | **Now playing.** Spotify, YouTube in a browser, or anything else Windows knows about. |
 
-**It stays out of the way.** Over a maximised window it shrinks to a thin strip that clicks pass through, so your tabs stay usable. Rest the pointer against the top edge to open it. In fullscreen it hides. It never takes keyboard focus unless you choose to type an answer, and its buttons ignore clicks for the first 0.4 seconds so nothing is approved by accident.
+**It stays out of the way.** It hides in fullscreen games, films and presentations. If the bar covers your tabs, right-click the tray icon and choose **Shrink when idle or over windows**: it becomes a thin strip that clicks pass through, and opens when you rest the pointer against the top edge. It never takes keyboard focus unless you choose to type an answer, and its buttons ignore clicks for the first 0.4 seconds so nothing is approved by accident.
 
 ### Supported agents
 

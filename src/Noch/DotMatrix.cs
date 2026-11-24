@@ -15,6 +15,7 @@ sealed class DotMatrix : FrameworkElement
     static readonly DispatcherTimer Clock = new(DispatcherPriority.Render) { Interval = TimeSpan.FromMilliseconds(125) };
     static readonly HashSet<DotMatrix> Live = [];
     static readonly double[] Bars = [1, 2, 1, 2, 1];
+    static double _loudest;
     static readonly Random Rng = new();
     static int _tick;
     public static bool MusicPlaying;
@@ -58,10 +59,13 @@ sealed class DotMatrix : FrameworkElement
 
     static void UpdateBars()
     {
-        var p = MusicPlaying ? Math.Sqrt(AudioMeter.Peak()) : 0;
+        // Measured against the loudest recent moment, so quiet music still moves the bars.
+        var peak = MusicPlaying ? AudioMeter.Peak() : 0;
+        _loudest = Math.Max(peak, _loudest * .99);
+        var p = peak / Math.Max(_loudest, .004);
         for (var i = 0; i < 5; i++)
         {
-            var want = MusicPlaying ? 1 + 4.2 * p * (.45 + .55 * Rng.NextDouble()) * (i is 1 or 2 ? 1 : .88) : 1;
+            var want = 1 + 4 * p * p * (.35 + .65 * Rng.NextDouble());
             Bars[i] = want > Bars[i] ? want : Math.Max(want, Bars[i] - 1.3);
         }
     }

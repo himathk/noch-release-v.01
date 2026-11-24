@@ -79,7 +79,7 @@ sealed class CompactView : View
     public CompactView(IHost h, bool agent, bool music) : base(h)
     {
         (_agent, _music) = (agent, music);
-        W = agent && music ? 364 : 300; Height = 36; Radius = 14; Ear = 8;
+        W = agent && music ? 364 : agent || music ? 300 : 190; Height = 36; Radius = 14; Ear = 8;
         UIElement? left, right; UIElement mid;
         if (agent)
         {
@@ -89,6 +89,11 @@ sealed class CompactView : View
             text.Children.Add(_label); text.Children.Add(_more);
             mid = text; left = _dots;
             if (music) { var r = Row(10); r.Children.Add(_eq); r.Children.Add(Tap(_cover, h.OpenPlayer)); right = r; } else right = _time;
+        }
+        else if (!music)
+        {
+            _dots.Kind = Dots.Idle;
+            left = _dots; mid = Label("No agents running", Text3); right = null;
         }
         else
         {
@@ -100,7 +105,7 @@ sealed class CompactView : View
         var bar = Bar(left, mid, right, 10);
         bar.Margin = new Thickness(12, 0, 12, 0); bar.VerticalAlignment = VerticalAlignment.Center;
         Content = new Border { Background = Brushes.Transparent, Height = 36, Child = bar };
-        MouseLeftButtonUp += (_, e) => { if (!e.Handled) { if (_agent) h.OpenPeek(); else h.OpenPlayer(); } };
+        MouseLeftButtonUp += (_, e) => { if (!e.Handled) { if (_music && !_agent) h.OpenPlayer(); else h.OpenPeek(); } };
         Update(); Tick();
     }
 

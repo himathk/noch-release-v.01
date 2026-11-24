@@ -6,7 +6,8 @@ namespace Noch;
 
 sealed class Settings
 {
-    public bool AlwaysFull { get; set; }
+    /// Off by default: the full bar stays on screen.
+    public bool Shrink { get; set; }
     public bool Welcomed { get; set; }
 
     /// Kept outside the install folder, which is replaced on every update.
