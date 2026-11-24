@@ -5,6 +5,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Shapes;
 using Noch.Core;
+using Panel = Noch.Core.Panel;
 using static Noch.Theme;
 using Dock = System.Windows.Controls.Dock;
 
@@ -13,6 +14,7 @@ namespace Noch;
 /// What a view needs from the rest of the app.
 interface IHost
 {
+    AppServices S { get; }
     AgentHub Hub { get; }
     MediaService Media { get; }
     IReadOnlyList<SetupItem> Setup { get; }
@@ -22,7 +24,10 @@ interface IHost
     bool Vertical { get; }
     void OpenPeek();
     void OpenPlayer();
+    void OpenPanel(Panel p);
     void Dismiss();
+    /// Something is being dragged out of the shelf, so it must not close.
+    bool Carrying { set; }
     void Focus(string sessionKey);
     void TakeKeyboard(TextBox box);
 }
@@ -77,42 +82,58 @@ sealed class StripView : View
         _bars.Children.Clear();
         void Add(Brush b) => _bars.Children.Add(new Rectangle { Width = Host.Vertical ? 3 : 28, Height = Host.Vertical ? 28 : 3, RadiusX = 1.5, RadiusY = 1.5, Fill = b });
         foreach (var s in Presenter.Ordered(Host.Hub.Sessions.Where(Presenter.Active)).Take(6)) Add(Presenter.NeedsYou(s) ? Need : Text);
+        if (Host.S.Timer.Active) Add(Theme.Brush(Host.S.Timer.IsBreak ? DoneColor : TextColor, .55));
+        if (Host.S.Calendar.Soon(DateTime.UtcNow) is { } meet) Add(meet.Start - DateTime.UtcNow < TimeSpan.FromMinutes(2) ? Need : Text2);
         if (Host.Media.Current is { Playing: true } m) Add(Theme.Brush(m.Tint));
         Wanted = Math.Max(1, _bars.Children.Count) * 33 + 41;
     }
 }
 
-/// One line: what the most important agent is doing, and what is playing.
+/// One line with whatever matters most on the left and the rest tucked in on the right.
 sealed class CompactView : View
 {
-    readonly bool _agent, _music;
-    readonly DotMatrix _dots = new(Dots.Think), _eq = new(Dots.Music);
-    readonly TextBlock _label = Label(""), _more = MonoText(""), _time = MonoText(""), _title = Label(""), _artist = Label("", Text3);
+    readonly Show _show, _first;
+    readonly DotMatrix _dots = new(Dots.Think), _eq = new(Dots.Music), _timer = new(Dots.Timer), _meet = new(Dots.Meeting);
+    readonly TextBlock _label = Label(""), _more = MonoText(""), _time = MonoText(""), _title = Label(""), _artist = Label("", Text3), _left = MonoText("", Text2), _meeting = Label(""), _soon = MonoText("", Need), _focus = Label("");
     readonly Border _cover = Cover(null, 22, 22, 6);
 
-    public CompactView(IHost h, bool agent, bool music) : base(h)
+    public CompactView(IHost h, Show show) : base(h)
     {
-        (_agent, _music) = (agent, music);
-        MouseLeftButtonUp += (_, e) => { if (!e.Handled) { if (_agent) h.OpenPeek(); else h.OpenPlayer(); } };
-        if (h.Vertical) { W = 44; Radius = 16; Ear = 8; Upright(); Update(); return; }
-        W = agent && music ? 364 : 300; Height = 36; Radius = 14; Ear = 8;
-        UIElement? left, right; UIElement mid;
-        if (agent)
+        _show = show;
+        _first = new[] { Show.Agent, Show.Meeting, Show.Timer, Show.Music }.First(s => show.HasFlag(s));
+        MouseLeftButtonUp += (_, e) =>
         {
-            var text = new DockPanel { LastChildFill = false };
-            _label.MaxWidth = music ? 206 : 190;
-            _more.Margin = new Thickness(8, 0, 0, 0);
-            text.Children.Add(_label); text.Children.Add(_more);
-            mid = text; left = _dots;
-            if (music) { var r = Row(10); r.Children.Add(_eq); r.Children.Add(Tap(_cover, h.OpenPlayer)); right = r; } else right = _time;
-        }
-        else
+            if (e.Handled) return;
+            if (_first == Show.Music) h.OpenPlayer(); else if (_first == Show.Timer) h.OpenPanel(Panel.Focus); else h.OpenPeek();
+        };
+        _timer.Level = 1;
+        if (h.Vertical) { W = 44; Radius = 16; Ear = 8; Upright(); Update(); Tick(); return; }
+        Height = 36; Radius = 14; Ear = 8;
+        bool Also(Show s) => show.HasFlag(s) && s != _first;
+        W = 300 + (Also(Show.Music) ? 64 : 0) + (Also(Show.Timer) ? 48 : 0) + (Also(Show.Meeting) ? 62 : 0);
+        UIElement left; UIElement mid;
+        var right = Row(10);
+        switch (_first)
         {
-            var text = new DockPanel { LastChildFill = true };
-            _title.MaxWidth = 140; _artist.Margin = new Thickness(10, 0, 0, 0);
-            text.Children.Add(_title); text.Children.Add(_artist);
-            left = _cover; mid = text; right = _eq;
+            case Show.Agent:
+                var text = new DockPanel { LastChildFill = false };
+                _label.MaxWidth = 196; _more.Margin = new Thickness(8, 0, 0, 0);
+                text.Children.Add(_label); text.Children.Add(_more);
+                left = _dots; mid = text;
+                if (!Also(Show.Music) && !Also(Show.Timer) && !Also(Show.Meeting)) right.Children.Add(_time);
+                break;
+            case Show.Meeting: left = _meet; mid = _meeting; right.Children.Add(_soon); break;
+            case Show.Timer: left = _timer; mid = _focus; right.Children.Add(_left); break;
+            default:
+                var song = new DockPanel { LastChildFill = true };
+                _title.MaxWidth = 140; _artist.Margin = new Thickness(10, 0, 0, 0);
+                song.Children.Add(_title); song.Children.Add(_artist);
+                left = _cover; mid = song; right.Children.Add(_eq);
+                break;
         }
+        if (Also(Show.Meeting)) right.Children.Add(Tap(_soon, h.OpenPeek));
+        if (Also(Show.Timer)) right.Children.Add(Tap(_left, () => h.OpenPanel(Panel.Focus)));
+        if (Also(Show.Music)) { right.Children.Add(_eq); right.Children.Add(Tap(_cover, h.OpenPlayer)); }
         var bar = Bar(left, mid, right, 10);
         bar.Margin = new Thickness(12, 0, 12, 0); bar.VerticalAlignment = VerticalAlignment.Center;
         Content = new Border { Background = Brushes.Transparent, Height = 36, Child = bar };
@@ -124,8 +145,10 @@ sealed class CompactView : View
     {
         var col = Col(10);
         col.HorizontalAlignment = HorizontalAlignment.Center;
-        if (_agent) { col.Children.Add(_dots); _more.HorizontalAlignment = HorizontalAlignment.Center; col.Children.Add(_more); }
-        if (_music) { col.Children.Add(_eq); col.Children.Add(Tap(_cover, Host.OpenPlayer)); }
+        if (_show.HasFlag(Show.Agent)) { col.Children.Add(_dots); _more.HorizontalAlignment = HorizontalAlignment.Center; col.Children.Add(_more); }
+        if (_show.HasFlag(Show.Meeting)) col.Children.Add(Tap(_meet, Host.OpenPeek));
+        if (_show.HasFlag(Show.Timer)) col.Children.Add(Tap(_timer, () => Host.OpenPanel(Panel.Focus)));
+        if (_show.HasFlag(Show.Music)) { col.Children.Add(_eq); col.Children.Add(Tap(_cover, Host.OpenPlayer)); }
         col.Margin = new Thickness(0, 14, 0, 14);
         Content = new Border { Background = Brushes.Transparent, Child = col };
     }
@@ -141,7 +164,7 @@ sealed class CompactView : View
 
     public override void Update()
     {
-        if (_agent && Top is { } s)
+        if (_show.HasFlag(Show.Agent) && Top is { } s)
         {
             _dots.Kind = DotMatrix.For(s.Activity);
             _label.Text = s.Label;
@@ -149,13 +172,31 @@ sealed class CompactView : View
             _more.Text = n > 0 ? "+" + n : "";
             _more.Visibility = n > 0 ? Visibility.Visible : Visibility.Collapsed;
         }
-        if (_music && Host.Media.Current is { } m)
+        if (_show.HasFlag(Show.Music) && Host.Media.Current is { } m)
         {
             _eq.Tint = m.Tint; _title.Text = m.Title; _artist.Text = m.Artist;
             _cover.Background = m.Art is null ? Raised : new ImageBrush(m.Art) { Stretch = Stretch.UniformToFill };
         }
     }
-    public override void Tick() { if (Top is { } s) _time.Text = Elapsed(s); }
+
+    public override void Tick()
+    {
+        var now = DateTime.UtcNow;
+        if (Top is { } s) _time.Text = Elapsed(s);
+        if (_show.HasFlag(Show.Timer))
+        {
+            var t = Host.S.Timer;
+            _left.Text = Clock(FocusView.Up(t.Left(now)));
+            _focus.Text = t.Paused ? "Paused" : t.IsBreak ? "Break" : "Focus";
+            _timer.Level = t.Fraction(now); _timer.Tint = t.IsBreak ? DoneColor : TextColor; _timer.Still = !t.Running;
+        }
+        if (_show.HasFlag(Show.Meeting) && Host.S.Calendar.Soon(now) is { } m)
+        {
+            _meeting.Text = m.Title;
+            _soon.Text = m.When(now) is "now" ? "now" : m.When(now).Replace("in ", "");
+            _soon.Foreground = m.Start - now < TimeSpan.FromMinutes(2) ? Need : Text2;
+        }
+    }
 }
 
 sealed class ApprovalView : View
@@ -287,11 +328,7 @@ sealed class QuestionView : View
         }
         all.Children.Add(new ScrollViewer { Content = list, MaxHeight = 300, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Focusable = false });
 
-        var box = new TextBox
-        {
-            Background = Raised, Foreground = Text, CaretBrush = Text, BorderThickness = new Thickness(0), FontFamily = Sans, FontSize = 13, Padding = new Thickness(10, 8, 10, 8), Visibility = Visibility.Collapsed
-        };
-        System.Windows.Automation.AutomationProperties.SetName(box, "Your answer");
+        var box = Box("Your answer", "Your answer"); box.Visibility = Visibility.Collapsed;
         box.KeyDown += (_, e) => { if (e.Key == Key.Enter && box.Text.Trim().Length > 0) Next(q, box.Text.Trim()); };
         all.Children.Add(box);
 
@@ -326,13 +363,16 @@ sealed class ToastView : View
         W = 400; Radius = 22;
         var text = Col(1);
         text.Children.Add(Strong(t.Title)); text.Children.Add(Caption(t.Detail));
-        var open = TextButton("Open", () => { h.Focus(t.SessionKey); h.Hub.DismissToast(); });
-        open.Padding = new Thickness(12, 7, 12, 7);
+        if (t.Body.Length > 0) text.Children.Add(NoticeView.Wrapped(t.Body, 4));
+        var open = NoticeView.Small("Open", () => { h.Focus(t.SessionKey); h.Hub.DismissToast(); });
         var bar = Bar(new DotMatrix(t.Failed ? Dots.Fail : Dots.Done), text, open);
+        if (t.Body.Length > 0) { W = 440; foreach (FrameworkElement e in bar.Children) if (e != text) { e.VerticalAlignment = VerticalAlignment.Top; if (e is DotMatrix) e.Margin = new Thickness(0, 8, 0, 0); } }
         bar.Margin = new Thickness(14, 11, 14, 11);
         Content = new Border { Background = Brushes.Transparent, Child = bar };
-        // A failure stays until it has been looked at.
-        MouseLeave += (_, _) => h.Hub.DismissToast();
+        // Stays while it is being read, and leaves when the pointer does.
+        MouseEnter += (_, _) => h.Hub.HoldToast = true;
+        MouseLeave += (_, _) => { h.Hub.HoldToast = false; h.Hub.DismissToast(); };
+        Unloaded += (_, _) => h.Hub.HoldToast = false;
     }
 }
 
@@ -351,7 +391,7 @@ sealed class PeekView : View
         var m = Host.Media.Current;
         var setup = Host.Setup;
         // Rebuild only when rows come or go; otherwise change the text in place so nothing flickers.
-        var shape = string.Join("|", sessions.Select(s => s.Key)) + $"#{m != null}#{string.Join(",", setup.Select(x => x.Name + x.Action))}";
+        var shape = string.Join("|", sessions.Select(s => s.Key)) + $"#{m != null}#{string.Join(",", setup.Select(x => x.Name + x.Action))}#{Host.S.Usage.FiveHour(DateTime.UtcNow) != null}{Host.S.Usage.SevenDay(DateTime.UtcNow) != null}#{Host.S.Stats.Line(DateTime.Now).Length > 0}";
         if (shape != _shape) { _shape = shape; Build(sessions, m, setup); }
         foreach (var u in _updates) u();
         Tick();
@@ -375,15 +415,56 @@ sealed class PeekView : View
             all.Children.Add(new Rectangle { Height = 1, Fill = Theme.Line, Margin = new Thickness(10, 8, 10, 8) });
             all.Children.Add(MediaRow());
         }
-        all.Margin = new Thickness(10, 12, 10, 10);
+        if (Host.S.Usage.FiveHour(DateTime.UtcNow) != null || Host.S.Usage.SevenDay(DateTime.UtcNow) != null) all.Children.Add(UsageRow());
+        all.Children.Add(new Rectangle { Height = 1, Fill = Theme.Line, Margin = new Thickness(10, 8, 10, 6) });
+        var tools = new Toolbar(Host);
+        _updates.Add(tools.Update); _clocks.Add(tools.Update);
+        all.Children.Add(tools);
+        var foot = Caption("", Text3); foot.Margin = new Thickness(16, 6, 16, 2);
+        _updates.Add(() =>
+        {
+            var line = Host.S.Stats.Line(DateTime.Now);
+            foot.Text = line.Length > 0 ? line : Host.S.Settings.Dragged ? "" : "Tip: drag the notch to any edge or corner.";
+            foot.Visibility = foot.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        });
+        all.Children.Add(foot);
+        all.Margin = new Thickness(10, 12, 10, 8);
         Content = all;
+    }
+
+    UIElement UsageRow()
+    {
+        var col = Col(4);
+        UIElement One(string name, Func<Limit?> get)
+        {
+            var dots = new DotLevel(25, 150); var pct = MonoText("", Text2, 11); var when = Caption("", Text3);
+            dots.HorizontalAlignment = HorizontalAlignment.Left;
+            var row = Bar(Bar(Caption(name, Text2), dots, null, 10), when, pct, 12);
+            _clocks.Add(() =>
+            {
+                if (get() is not { } l) { row.Visibility = Visibility.Collapsed; return; }
+                row.Visibility = Visibility.Visible;
+                dots.Value = l.Percent / 100; dots.Tint = l.Percent >= 90 ? FailColor : TextColor;
+                pct.Text = $"{l.Percent:0}%";
+                var at = l.ResetsAt.ToLocalTime();
+                when.Text = "resets " + (at.Date == DateTime.Today ? at.ToString("HH:mm") : at.ToString("ddd HH:mm"));
+            });
+            return row;
+        }
+        col.Children.Add(One("5 h", () => Host.S.Usage.FiveHour(DateTime.UtcNow)));
+        col.Children.Add(One("7 d", () => Host.S.Usage.SevenDay(DateTime.UtcNow)));
+        col.Margin = new Thickness(12, 10, 12, 2);
+        return col;
     }
 
     UIElement AgentRow(AgentSession s)
     {
         var dots = new DotMatrix(DotMatrix.For(s.Activity));
         var act = Caption("");
-        var time = MonoText("");
+        var time = MonoText(""); var size = MonoText("", Text3, 11);
+        time.TextAlignment = size.TextAlignment = TextAlignment.Right; time.HorizontalAlignment = size.HorizontalAlignment = HorizontalAlignment.Right;
+        size.ToolTip = "How much of the conversation it is holding in mind";
+        var side = Col(1); side.Children.Add(time); side.Children.Add(size);
         var title = Row(6);
         title.Children.Add(Strong(s.Project)); title.Children.Add(Label(s.Agent, Text3));
         var text = Col(1); text.Children.Add(title); text.Children.Add(act);
@@ -391,11 +472,17 @@ sealed class PeekView : View
         {
             dots.Kind = DotMatrix.For(s.Activity);
             var sub = s.Subagents.Count;
-            act.Text = (s.Label.Length > 0 ? s.Label : "Waiting for your next message") + (sub > 0 ? sub == 1 ? ", 1 subagent" : $", {sub} subagents" : "");
+            act.Text = (s.Activity == Activity.Done && s.LastMessage.Length > 0 ? s.LastMessage : s.Label.Length > 0 ? s.Label : "Waiting for your next message") + (sub > 0 ? sub == 1 ? ", 1 subagent" : $", {sub} subagents" : "");
             act.Foreground = Presenter.NeedsYou(s) ? Need : s.Activity == Activity.Failed ? Fail : Text2;
         });
-        _clocks.Add(() => time.Text = Presenter.Active(s) ? Elapsed(s) : "");
-        return Theme.Button(Bar(dots, text, time), $"{s.Project}, {s.Agent}", () =>
+        _clocks.Add(() =>
+        {
+            time.Text = Presenter.Active(s) ? Elapsed(s) : "";
+            time.Visibility = time.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+            size.Text = Host.S.Usage.Context(s.Key) is { } p ? $"{p:0}%" : s.ContextTokens is { } n ? Transcript.Short(n) : "";
+            size.Visibility = size.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        });
+        return Theme.Button(Bar(dots, text, side), $"{s.Project}, {s.Agent}", () =>
         {
             // If it is waiting on an answer, show the card; otherwise go to its window.
             if (Host.Hub.Pending.Any(p => p.SessionKey == s.Key)) Host.Dismiss(); else { Host.Focus(s.Key); Host.Dismiss(); }
@@ -511,7 +598,7 @@ sealed class PlayerView : View
     public override void Update()
     {
         if (Host.Media.Current is not { } m) return;
-        _title.Text = m.Title; _artist.Text = m.Artist; _artist.Visibility = m.Artist.Length > 0 ? Visibility.Visible : Visibility.Collapsed; _source.Text = m.Source;
+        _title.Text = m.Title; _artist.Text = m.Artist; _artist.Visibility = m.Artist.Length > 0 ? Visibility.Visible : Visibility.Collapsed; _source.Text = Host.S.Notices.Current is { Kind: NoticeKind.Volume, Level: { } v } ? $"Volume {v * 100:0}%" : m.Source;
         _cover.Background = m.Art is null ? Raised : new ImageBrush(m.Art) { Stretch = Stretch.UniformToFill };
         // Video thumbnails are wide, album covers are square.
         _cover.Width = m.Art is { } a && (double)a.PixelWidth / a.PixelHeight > 1.3 ? 128 : 72;

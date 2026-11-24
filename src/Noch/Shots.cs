@@ -30,28 +30,32 @@ static class Shots
                 Art = art, Tint = MediaService.TintOf(art)
             });
             var hub = new AgentHub { MinTurnForToast = TimeSpan.Zero };
-            var w = new NotchWindow(hub, media, new Settings()) { Left = -4000, Top = -4000, WindowStartupLocation = WindowStartupLocation.Manual };
+            var settings = new Settings();
+            var notices = new Notices();
+            var sounds = new Sounds(settings);
+            var services = new AppServices { Settings = settings, Hub = hub, Media = media, Notices = notices, Sounds = sounds, Usage = new Usage(), Timer = new FocusTimer(settings.Focus), Shelf = new Shelf(), Stats = new Stats(), Calendar = new CalendarService(settings, notices, sounds), Notifications = new NotificationService(settings, notices) };
+            var w = new NotchWindow(services) { Left = -4000, Top = -4000, WindowStartupLocation = WindowStartupLocation.Manual };
             w.Show();
             w.Left = -4000;
             void Shot(string name, View v) { w.ShowForPicture(v); Save(w, Path.Combine(dir, name + ".png")); }
 
             Shot("01-rest", new RestView(w, false));
-            Shot("02-music", new CompactView(w, false, true));
+            Shot("02-music", new CompactView(w, Show.Music));
             _ = hub.HandleAsync(E("p", "UserPromptSubmit", @"D:\Work\portfolio"));
             _ = hub.HandleAsync(E("p", "PreToolUse", @"D:\Work\portfolio", "\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"src/auth.ts\"}"));
-            Shot("03-agent", new CompactView(w, true, false));
+            Shot("03-agent", new CompactView(w, Show.Agent));
             _ = hub.HandleAsync(E("p", "SubagentStart", @"D:\Work\portfolio", "\"agent_id\":\"a\""));
             _ = hub.HandleAsync(E("p", "SubagentStart", @"D:\Work\portfolio", "\"agent_id\":\"b\""));
-            Shot("04-both", new CompactView(w, true, true));
+            Shot("04-both", new CompactView(w, Show.Agent | Show.Music));
             foreach (var (name, dock) in new[] { ("left", new Noch.Core.Dock(Side.Left, .5)), ("right", new Noch.Core.Dock(Side.Right, .3)) })
             {
                 w.SetDockForPicture(dock);
-                Shot("20-" + name, new CompactView(w, true, true));
+                Shot("20-" + name, new CompactView(w, Show.Agent | Show.Music));
             }
             foreach (var (name, dock) in new[] { ("bottom", new Noch.Core.Dock(Side.Bottom, .5)), ("corner-tl", new Noch.Core.Dock(Side.Top, 0)), ("corner-tr", new Noch.Core.Dock(Side.Top, 1)), ("corner-br", new Noch.Core.Dock(Side.Bottom, 1)) })
             {
                 w.SetDockForPicture(dock);
-                Shot("20-" + name, new CompactView(w, true, true));
+                Shot("20-" + name, new CompactView(w, Show.Agent | Show.Music));
             }
             w.SetDockForPicture(Noch.Core.Dock.TopCentre);
             Film(Path.Combine(dir, "30-drag.png"));
@@ -69,6 +73,46 @@ static class Shots
             Shot("10-question", new QuestionView(w, hub.Pending[2]));
             Shot("11-done", new ToastView(w, new Toast("p", false, "Claude Code finished", "portfolio, took 4:12", DateTime.UtcNow)));
             Shot("12-failed", new ToastView(w, new Toast("c", true, "Cursor stopped", "noch, something went wrong", DateTime.UtcNow)));
+            // ---- newer screens
+            var now = DateTime.UtcNow;
+            services.Timer.Start(TimeSpan.FromMinutes(25), false, now.AddMinutes(-9.4));
+            services.Calendar.Meetings = [new Meeting("m", "Design review", now.AddMinutes(7.5), now.AddMinutes(37), "https://meet.google.com/abc")];
+            Shot("40-timer", new CompactView(w, Show.Timer));
+            Shot("41-everything", new CompactView(w, Show.Agent | Show.Music | Show.Timer | Show.Meeting));
+            Shot("42-meeting", new CompactView(w, Show.Meeting | Show.Music));
+            Shot("43-focus", new FocusView(w));
+            services.Timer.Pause(now);
+            Shot("44-paused", new FocusView(w));
+            Shot("45-shelf-empty", new ShelfView(w));
+            var sample = Path.Combine(Path.GetTempPath(), "noch-sample"); Directory.CreateDirectory(sample);
+            foreach (var f in new[] { "Invoice March.pdf", "logo-final-v2.png", "notes.txt", "archive.zip" }) File.WriteAllText(Path.Combine(sample, f), "x");
+            services.Shelf.Add(Directory.GetFiles(sample).Select(f => new ShelfItem(ShelfKind.File, f)).Append(Shelf.FromText("https://figma.com/design/abc")!).Append(Shelf.FromText("Remember to rename the branch")!));
+            var shelf = new ShelfView(w);
+            w.ShowForPicture(shelf);
+            await Task.Delay(700);
+            Shot("46-shelf", shelf);
+            Shot("47-meeting-now", new NoticeView(w, new Notice("a", NoticeKind.Meeting, "Design review", "Starts in a minute") { ActionLabel = "Join" }));
+            Shot("48-app", new NoticeView(w, new Notice("b", NoticeKind.App, "Nimal", "WhatsApp") { Body = "Are we still on for lunch? I can do half past twelve or one, whichever suits you better.", ActionLabel = "Open", SideLabel = "Mute" }));
+            Shot("49-clash", new NoticeView(w, new Notice("c", NoticeKind.Warning, "Two agents are editing cart.ts", "shop and shop-mobile") { ActionLabel = "Open" }));
+            Shot("50-volume", new NoticeView(w, new Notice("d", NoticeKind.Volume, "Volume") { Level = .42 }));
+            Shot("51-charging", new NoticeView(w, new Notice("e", NoticeKind.Power, "Charging", "64%") { Level = .64 }));
+            Shot("52-done-summary", new ToastView(w, new Toast("claude:p", false, "Claude Code finished", "portfolio, took 4:12", now) { Body = "Added sign-in with Auth.js and moved the session check into middleware. All 48 tests pass. One thing left for you: add the two secrets to your .env file." }));
+            Shot("53-timer-done", new NoticeView(w, new Notice("f", NoticeKind.Timer, "Focus done", "Nice work.") { ActionLabel = "Break 5 min" }));
+            var later = new DateTimeOffset(now.AddHours(2)).ToUnixTimeSeconds();
+            services.Usage.Take((JsonObject)JsonNode.Parse("{\"session_id\":\"p\",\"context_window\":{\"used_percentage\":31},\"rate_limits\":{\"five_hour\":{\"used_percentage\":42,\"resets_at\":" + later + "},\"seven_day\":{\"used_percentage\":93,\"resets_at\":" + (later + 300000) + "}}}")!, now);
+            services.Stats.Turn(TimeSpan.FromMinutes(100), DateTime.Now); services.Stats.Focused(50, DateTime.Now);
+            if (hub.Find("claude:i") is { } si) si.ContextTokens = 182_000;
+            services.Timer.Resume(now);
+            Shot("54-peek-full", new PeekView(w));
+            w.SetDockForPicture(new Noch.Core.Dock(Side.Left, .5));
+            Shot("55-left-everything", new CompactView(w, Show.Agent | Show.Music | Show.Timer | Show.Meeting));
+            w.SetDockForPicture(Noch.Core.Dock.TopCentre);
+            services.Timer.Stop();
+            var sw = new SettingsWindow(services, new FakeActions());
+            sw.Left = -3000; sw.WindowStartupLocation = WindowStartupLocation.Manual; sw.Height = 1700; sw.Show(); sw.UpdateLayout();
+            await Task.Delay(300);
+            Write((Visual)VisualTreeHelper.GetChild(sw, 0), (int)(sw.ActualWidth * 1.5), (int)(sw.ActualHeight * 1.5), 144, Path.Combine(dir, "60-settings.png"));
+            sw.Close();
             w.SetupItems = () => [new("Claude Code", "Show its work and answer it from here", "Connect", () => { }), new("Cursor", "Show what it is doing", "Connect", () => { })];
             foreach (var k in new[] { "p", "i", "e", "q" }) _ = hub.HandleAsync(E(k, "SessionEnd", ""));
             _ = hub.HandleAsync(E("c", "sessionEnd", "", source: "cursor"));
@@ -112,6 +156,18 @@ static class Shots
         var root = new DrawingVisual();
         using (var dc = root.RenderOpen()) { dc.PushTransform(new ScaleTransform(k, k)); dc.DrawDrawing(dv.Drawing); }
         Write(root, (int)(cols * (area.Width + 24) * k), (int)((at.Length / cols) * (area.Height + 24) * k), 96, path);
+    }
+
+    sealed class FakeActions : SettingsWindow.ISettingsActions
+    {
+        static readonly string Dir = Path.Combine(Path.GetTempPath(), "noch-sample");
+        public ClaudeConnector Claude { get; } = new(Dir, "noch-hook.exe");
+        public IReadOnlyList<(string, Connector)> Agents => [("Claude Code", Claude), ("Cursor", new CursorConnector(Dir, "noch-hook.exe")), ("Codex", new CodexConnector(Path.Combine(Dir, "none"), "noch-hook.exe"))];
+        public string? Try(Action a) => null;
+        public void Refresh() { }
+        public string Version => "0.3.0";
+        public void CheckForUpdates(Action<string> tell) { }
+        public string? Repo => "https://github.com/himathk/noch-release-v.01";
     }
 
     static void Save(NotchWindow w, string path)

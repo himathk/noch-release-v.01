@@ -71,6 +71,51 @@ static class Theme
         return Button(new Viewbox { Width = size, Height = size, Child = path }, name, click, 10, new Thickness(8), Brushes.Transparent);
     }
 
+    /// A thin dark bar without arrows.
+    public static readonly Style ScrollBar = (Style)XamlReader.Parse("""
+        <Style xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" TargetType="ScrollBar">
+          <Setter Property="Width" Value="10"/><Setter Property="MinWidth" Value="10"/><Setter Property="Background" Value="Transparent"/>
+          <Setter Property="Template">
+            <Setter.Value>
+              <ControlTemplate TargetType="ScrollBar">
+                <Grid Background="Transparent">
+                  <Track x:Name="PART_Track" IsDirectionReversed="True">
+                    <Track.DecreaseRepeatButton><RepeatButton Command="ScrollBar.PageUpCommand" Opacity="0" Focusable="False"/></Track.DecreaseRepeatButton>
+                    <Track.IncreaseRepeatButton><RepeatButton Command="ScrollBar.PageDownCommand" Opacity="0" Focusable="False"/></Track.IncreaseRepeatButton>
+                    <Track.Thumb>
+                      <Thumb><Thumb.Template><ControlTemplate TargetType="Thumb"><Border Background="#3A3C3E" CornerRadius="2" Width="4" Margin="3,2"/></ControlTemplate></Thumb.Template></Thumb>
+                    </Track.Thumb>
+                  </Track>
+                </Grid>
+              </ControlTemplate>
+            </Setter.Value>
+          </Setter>
+        </Style>
+        """);
+
+    /// A rounded dark text box with a faint prompt.
+    static readonly ControlTemplate BoxTemplate = (ControlTemplate)XamlReader.Parse("""
+        <ControlTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" TargetType="TextBox">
+          <Border x:Name="B" Background="#171818" CornerRadius="10" BorderThickness="1" BorderBrush="#171818" Padding="10,8">
+            <Grid>
+              <TextBlock x:Name="Hint" Text="{TemplateBinding Tag}" Foreground="#7E8183" Visibility="Collapsed" IsHitTestVisible="False"/>
+              <ScrollViewer x:Name="PART_ContentHost" Focusable="False"/>
+            </Grid>
+          </Border>
+          <ControlTemplate.Triggers>
+            <Trigger Property="Text" Value=""><Setter TargetName="Hint" Property="Visibility" Value="Visible"/></Trigger>
+            <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="B" Property="BorderBrush" Value="#4A4C4E"/></Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+        """);
+
+    public static TextBox Box(string hint, string name)
+    {
+        var b = new TextBox { Template = BoxTemplate, Tag = hint, Foreground = Text, CaretBrush = Text, FontFamily = Sans, FontSize = 13, SelectionBrush = Text3 };
+        AutomationProperties.SetName(b, name);
+        return b;
+    }
+
     public const string Prev = "M16,4.5 V15.5 L7.5,10 Z M4,4.5 H6 V15.5 H4 Z", Next = "M4,4.5 V15.5 L12.5,10 Z M14,4.5 H16 V15.5 H14 Z",
         Pause = "M5.5,4 H8.5 V16 H5.5 Z M11.5,4 H14.5 V16 H11.5 Z", Play = "M6,3.5 V16.5 L16.5,10 Z";
 

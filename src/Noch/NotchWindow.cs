@@ -9,6 +9,7 @@ using System.Windows.Media.Effects;
 using System.Windows.Threading;
 using Microsoft.Win32;
 using Noch.Core;
+using Panel = Noch.Core.Panel;
 using Dock = Noch.Core.Dock;
 
 namespace Noch;
@@ -21,42 +22,57 @@ sealed class NotchWindow : Window, IHost
     IntPtr _hwnd;
     View? _view;
     string _key = "";
-    bool _peek, _player, _covered, _fullscreen, _hotkeys, _typing, _growing, _quiet, _bounce;
+    Panel _panel;
+    bool _covered, _fullscreen, _hotkeys, _typing, _growing, _quiet, _bounce;
     DateTime _dwell = DateTime.MaxValue, _outside = DateTime.MaxValue, _armAt = DateTime.MaxValue, _lastFrame, _lastProbe, _lastSweep, _pinnedUntil;
     Rect _area;
 
-    public AgentHub Hub { get; }
-    public MediaService Media { get; }
+    public AppServices S { get; }
+    public AgentHub Hub => S.Hub;
+    public MediaService Media => S.Media;
+    public bool Carrying { get; set; }
     public Func<IReadOnlyList<SetupItem>> SetupItems { get; set; } = () => [];
     public IReadOnlyList<SetupItem> Setup => SetupItems();
     public bool Armed => DateTime.UtcNow >= _armAt;
     public bool Vertical => _shell.Dock.Vertical;
     public NotchState State { get; private set; } = NotchState.Rest;
 
-    public NotchWindow(AgentHub hub, MediaService media, Settings settings)
+    public NotchWindow(AppServices services)
     {
-        Hub = hub; Media = media; _settings = settings;
-        Title = "Noch"; Width = 620; Height = 540;
+        S = services; _settings = services.Settings;
+        Title = "Noch"; Width = 620; Height = 700;
         WindowStyle = WindowStyle.None; AllowsTransparency = true; Background = null; ResizeMode = ResizeMode.NoResize;
         ShowInTaskbar = false; ShowActivated = false; Topmost = true; UseLayoutRounding = true;
+        Resources.Add(typeof(ScrollBar), Theme.ScrollBar);
         _shell.Width = Width; _shell.Height = Height;
-        _shell.Dock = Dock.Parse(settings.Dock);
+        _shell.Dock = Dock.Parse(_settings.Dock);
         Content = _shell;
 
         Hub.Changed += () => Dispatcher.BeginInvoke(Sync);
         Media.Changed += () => { DotMatrix.MusicPlaying = Media.Current?.Playing == true; Sync(); };
         Hub.Busy = () => _fullscreen;
+        S.Sounds.Silent = () => _fullscreen;
+        S.Notices.Changed += () => Dispatcher.BeginInvoke(Sync);
+        S.Timer.Changed += () => Dispatcher.BeginInvoke(() => { _settings.Save(); Sync(); });
+        S.Shelf.Changed += () => Dispatcher.BeginInvoke(Sync);
+        S.Calendar.Changed += () => Dispatcher.BeginInvoke(Sync);
+        S.Usage.Changed += () => Dispatcher.BeginInvoke(() => { if (_panel == Panel.Peek) Sync(); });
         _tick.Tick += (_, _) => OnTick();
         _poll.Tick += (_, _) => Poll();
         _openSoon.Tick += (_, _) => { _openSoon.Stop(); if (_shell.IsMouseOver && Hoverable && _press is null) OpenPeek(); };
         _shell.MouseEnter += (_, _) => { if (Hoverable) _openSoon.Start(); };
         _shell.MouseLeave += (_, _) => _openSoon.Stop();
         _shell.PreviewMouseLeftButtonDown += OnPress;
+        _shell.PreviewMouseWheel += OnWheel;
+        _shell.AllowDrop = true;
+        _shell.DragEnter += OnDragOver; _shell.DragOver += OnDragOver;
+        _shell.DragLeave += (_, _) => { if (_view is ShelfView s) s.Over = false; };
+        _shell.Drop += OnDrop;
         SystemEvents.DisplaySettingsChanged += (_, _) => Dispatcher.BeginInvoke(Place);
         DpiChanged += (_, _) => Dispatcher.BeginInvoke(Place);
     }
 
-    bool Hoverable => State is NotchState.Agent or NotchState.Both or NotchState.Music;
+    bool Hoverable => State is NotchState.Compact;
 
     protected override void OnSourceInitialized(EventArgs e)
     {
@@ -65,6 +81,7 @@ sealed class NotchWindow : Window, IHost
         Native.SetExStyle(_hwnd, Native.WS_EX_NOACTIVATE | Native.WS_EX_TOOLWINDOW, true);
         HwndSource.FromHwnd(_hwnd)!.AddHook(WndProc);
         Place();
+        Shortcut();
         _tick.Start(); _poll.Start();
         Sync();
     }
@@ -97,7 +114,12 @@ sealed class NotchWindow : Window, IHost
     IntPtr WndProc(IntPtr h, int msg, IntPtr w, IntPtr l, ref bool handled)
     {
         if (msg == Native.WM_MOUSEACTIVATE && !_typing) { handled = true; return Native.MA_NOACTIVATE; }
-        if (msg == Native.WM_HOTKEY && Armed && _drag is null && Hub.Pending.FirstOrDefault() is { IsQuestion: false } p && State == NotchState.Approval)
+        if (msg == Native.WM_HOTKEY && w == 3)
+        {
+            handled = true;
+            if (_drag is null) { if (_panel == Panel.None) Welcome(); else Dismiss(); }
+        }
+        else if (msg == Native.WM_HOTKEY && Armed && _drag is null && Hub.Pending.FirstOrDefault() is { IsQuestion: false } p && State == NotchState.Approval)
         {
             handled = true;
             if (w == 1) Hub.Allow(p); else Hub.Deny(p);
@@ -107,11 +129,23 @@ sealed class NotchWindow : Window, IHost
 
     // ---- IHost ----
 
-    public void OpenPeek() { _peek = true; _player = false; Sync(); }
-    public void OpenPlayer() { _player = true; _peek = false; Sync(); }
-    public void Dismiss() { _peek = _player = false; _pinnedUntil = default; StopTyping(); Sync(); }
+    public void OpenPeek() => OpenPanel(Panel.Peek);
+    public void OpenPlayer() => OpenPanel(Panel.Player);
+    public void OpenPanel(Panel p) { _panel = p; Sync(); }
+    public void Dismiss() { _panel = Panel.None; _pinnedUntil = default; StopTyping(); Sync(); }
     public void Focus(string key) { if (Hub.Find(key) is { } s) Native.Focus(s.Pids); }
-    public void Welcome() { _pinnedUntil = DateTime.UtcNow.AddSeconds(20); OpenPeek(); }
+    public void Welcome() => OpenPinned(Panel.Peek);
+    /// Opened from away, so it waits a while for the pointer to arrive.
+    public void OpenPinned(Panel p) { _pinnedUntil = DateTime.UtcNow.AddSeconds(20); OpenPanel(p); }
+
+    bool _shortcut;
+    /// Ctrl Alt . from anywhere.
+    public void Shortcut()
+    {
+        if (_hwnd == IntPtr.Zero || _shortcut == _settings.Shortcut) return;
+        _shortcut = _settings.Shortcut;
+        if (_shortcut) Native.RegisterHotKey(_hwnd, 3, Native.MOD_CONTROL | Native.MOD_ALT | Native.MOD_NOREPEAT, 0xBE); else Native.UnregisterHotKey(_hwnd, 3);
+    }
 
     public void TakeKeyboard(TextBox box)
     {
@@ -135,15 +169,21 @@ sealed class NotchWindow : Window, IHost
 
     public void Sync()
     {
-        if (_hwnd == IntPtr.Zero) return;
-        if (_player && Media.Current is null) _player = false;
-        State = Presenter.Choose(Hub, new Scene(_fullscreen, _covered && !_settings.AlwaysFull, MusicVisible, _peek, _player));
+        if (_hwnd == IntPtr.Zero || _quiet) return;
+        if (_panel == Panel.Player && Media.Current is null) _panel = Panel.None;
+        var notice = S.Notices.Current;
+        var scene = new Scene(_fullscreen, _covered && !_settings.AlwaysFull, _panel, MusicVisible, S.Timer.Active, S.Calendar.Soon(DateTime.UtcNow) != null, notice, S.Timer.Quiet);
+        State = Presenter.Choose(Hub, scene);
+        var show = scene.Bar(Hub.Sessions.Any(Presenter.Active));
         if (_drag != null) { _drag.Kind = BubbleDots; return; }
         var pending = Hub.Pending.FirstOrDefault();
         var key = State switch
         {
             NotchState.Approval or NotchState.Question => State + ":" + pending?.GetHashCode(),
             NotchState.Done or NotchState.Failed => State + ":" + Hub.Toast?.At.Ticks,
+            NotchState.Compact => State + ":" + (int)show,
+            // A level moving up or down is the same message.
+            NotchState.Notice => State + ":" + notice?.Id + (notice?.Kind == NoticeKind.Volume ? "" : notice?.At.Ticks),
             _ => State.ToString()
         };
         if (key != _key)
@@ -153,14 +193,15 @@ sealed class NotchWindow : Window, IHost
                 NotchState.Hidden => new RestView(this, true),
                 NotchState.Rest => new RestView(this, false),
                 NotchState.Strip => new StripView(this),
-                NotchState.Music => new CompactView(this, false, true),
-                NotchState.Agent => new CompactView(this, true, false),
-                NotchState.Both => new CompactView(this, true, true),
+                NotchState.Compact => new CompactView(this, show),
+                NotchState.Notice when notice != null => new NoticeView(this, notice),
                 NotchState.Approval when pending != null => new ApprovalView(this, pending),
                 NotchState.Question when pending != null => new QuestionView(this, pending),
                 NotchState.Done or NotchState.Failed when Hub.Toast is { } t => new ToastView(this, t),
                 NotchState.Peek => new PeekView(this),
                 NotchState.Player => new PlayerView(this),
+                NotchState.Focus => new FocusView(this),
+                NotchState.Shelf => new ShelfView(this),
                 _ => null
             };
             if (next is null) return; // it was answered while we were looking; the next change brings us back
@@ -169,6 +210,7 @@ sealed class NotchWindow : Window, IHost
             if (State != NotchState.Question) StopTyping();
             Swap(next);
         }
+        else if (_view is NoticeView nv && notice != null) nv.Show(notice);
         else _view?.Update();
         Resize();
         HotKeys(State == NotchState.Approval);
@@ -291,7 +333,7 @@ sealed class NotchWindow : Window, IHost
     {
         // Leave alone anything that has its own use for dragging.
         for (var o = e.OriginalSource as DependencyObject; o != null && o != _shell; o = o is Visual ? VisualTreeHelper.GetParent(o) : LogicalTreeHelper.GetParent(o))
-            if (o is TextBoxBase or ScrollBar or DotTimeline) return;
+            if (o is TextBoxBase or ScrollBar or DotTimeline or ShelfTile) return;
         if (_drag != null) return;
         Native.GetCursorPos(out var p);
         _press = p;
@@ -315,7 +357,7 @@ sealed class NotchWindow : Window, IHost
 
     Dots BubbleDots => Hub.Pending.Count > 0 ? Hub.Pending[0].IsQuestion ? Dots.Ask : Dots.Need
         : Presenter.Ordered(Hub.Sessions.Where(Presenter.Active)).FirstOrDefault() is { } s ? DotMatrix.For(s.Activity)
-        : MusicVisible ? Dots.Music : Dots.Think;
+        : S.Timer.Active ? Dots.Timer : MusicVisible ? Dots.Music : Dots.Think;
 
     internal void BeginDrag()
     {
@@ -324,7 +366,8 @@ sealed class NotchWindow : Window, IHost
         if (PointerScript == null) Mouse.Capture(_shell);
         HotKeys(false);
         StopTyping();
-        _peek = _player = false; _pinnedUntil = default;
+        _panel = Panel.None; _pinnedUntil = default;
+        if (!_settings.Dragged) { _settings.Dragged = true; _settings.Save(); }
         var p = Pointer();
         var bubble = new Bubble(_shell.Dock, _shell.Body(), _shell.Area, p.X, p.Y) { Motion = Motion };
         _drag = new DragScene(bubble, _area, Scale, BubbleDots, Media.Current?.Tint ?? Theme.MediaColor);
@@ -415,8 +458,71 @@ sealed class NotchWindow : Window, IHost
         {
             _lastSweep = now;
             Hub.Sweep(Native.ProcessAlive, now);
-            if (State is NotchState.Music or NotchState.Both or NotchState.Strip && !MusicVisible) Sync();
+            S.Timer.Tick(now);
+            S.Notices.Tick(now, State == NotchState.Notice || _panel == Panel.Player && S.Notices.Current?.Kind == NoticeKind.Volume, State == NotchState.Notice && _shell.IsMouseOver);
+            // Music that stopped a while ago, a meeting that came near: the bar may need to change.
+            if (_drag is null && (State is NotchState.Compact or NotchState.Strip or NotchState.Rest) && Bar != _bar) { _bar = Bar; Sync(); }
+            Measure(now);
         }
+    }
+
+    Core.Show _bar;
+    Core.Show Bar => (MusicVisible ? Core.Show.Music : 0) | (S.Timer.Active ? Core.Show.Timer : 0) | (S.Calendar.Soon(DateTime.UtcNow) != null ? Core.Show.Meeting : 0);
+
+    DateTime _measured;
+    bool _measuring;
+    /// Looks up how long each conversation has grown, now and then and off to the side.
+    async void Measure(DateTime now)
+    {
+        if (_measuring || now - _measured < TimeSpan.FromSeconds(_panel == Panel.Peek ? 4 : 20)) return;
+        _measured = now; _measuring = true;
+        try
+        {
+            foreach (var s in Hub.Sessions.Where(s => s.TranscriptPath != null && now - s.LastSeen < TimeSpan.FromMinutes(30)))
+            {
+                var path = s.TranscriptPath;
+                if (await Task.Run(() => Transcript.ContextTokens(path)) is { } n) s.ContextTokens = n;
+            }
+        }
+        finally { _measuring = false; }
+    }
+
+    // ---- scrolling and dropping ----
+
+    void OnWheel(object sender, MouseWheelEventArgs e)
+    {
+        if (!_settings.WheelVolume || !(State == NotchState.Player || State == NotchState.Compact && MusicVisible || State == NotchState.Notice && S.Notices.Current?.Kind == NoticeKind.Volume)) return;
+        e.Handled = true;
+        if (Volume.Change(e.Delta > 0 ? .02 : -.02) is not { } level) return;
+        S.Notices.Post(new Notice("volume", NoticeKind.Volume, "Volume") { Level = level, Life = TimeSpan.FromSeconds(1.4) });
+    }
+
+    static bool CanDrop(IDataObject d) => d.GetDataPresent(DataFormats.FileDrop) || d.GetDataPresent(DataFormats.UnicodeText);
+
+    void OnDragOver(object sender, DragEventArgs e)
+    {
+        e.Handled = true;
+        // Only where it lives is kept, so never ask to move it. A link will do where copying is not offered.
+        e.Effects = Carrying || _drag != null || !CanDrop(e.Data) ? DragDropEffects.None
+            : e.AllowedEffects.HasFlag(DragDropEffects.Link) ? DragDropEffects.Link : e.AllowedEffects & DragDropEffects.Copy;
+        if (e.Effects == DragDropEffects.None) return;
+        _openSoon.Stop();
+        if (_panel != Panel.Shelf) { _pinnedUntil = DateTime.UtcNow.AddSeconds(2); OpenPanel(Panel.Shelf); }
+        if (_view is ShelfView s) { s.Over = true; Resize(); }
+    }
+
+    void OnDrop(object sender, DragEventArgs e)
+    {
+        e.Handled = true;
+        if (Carrying) return;
+        try
+        {
+            if (e.Data.GetData(DataFormats.FileDrop) is string[] files) S.Shelf.Add(files.Reverse().Select(f => new ShelfItem(ShelfKind.File, f)));
+            else if (Shelf.FromText(e.Data.GetData(DataFormats.UnicodeText) as string) is { } item) S.Shelf.Add([item]);
+        }
+        catch (Exception ex) { Program.Log(ex); }
+        if (_view is ShelfView s) s.Over = false;
+        Sync();
     }
 
     /// Uses the cursor position rather than mouse events: the strip lets clicks through, so it never gets
@@ -424,10 +530,10 @@ sealed class NotchWindow : Window, IHost
     void Poll()
     {
         if (_drag != null) return;
-        if (_peek || _player) { CloseWhenLeft(); return; }
+        if (_panel != Panel.None) { CloseWhenLeft(); return; }
         _outside = DateTime.MaxValue;
         // Resting against the edge opens the strip.
-        if (State is not (NotchState.Rest or NotchState.Strip) || _fullscreen) { _dwell = DateTime.MaxValue; return; }
+        if (State is not (NotchState.Rest or NotchState.Strip) || _fullscreen || Carrying) { _dwell = DateTime.MaxValue; return; }
         var p = Pointer();
         var b = _shell.Dock.Place(_shell.W.Target, _shell.H.Target, _area.Width, _area.Height);
         // Against the taskbar there is no screen edge to push into, so the whole strip counts.
@@ -435,10 +541,12 @@ sealed class NotchWindow : Window, IHost
         {
             Side.Top => _area.Top <= 0, Side.Left => _area.Left <= 0, Side.Right => _area.Right >= SystemParameters.PrimaryScreenWidth, _ => _area.Bottom >= SystemParameters.PrimaryScreenHeight
         } ? 1.5 : 10;
-        var near = !p.Down && b.Contains(p.X, p.Y, 2) && Dock.Depth(_shell.Dock.Side, p.X, p.Y, _area.Width, _area.Height) <= limit;
+        // Holding something over the edge opens the shelf for it, unless it is a window being moved or resized.
+        var carrying = p.Down && !Native.MovingWindow();
+        var near = (!p.Down || carrying) && b.Contains(p.X, p.Y, 2) && Dock.Depth(_shell.Dock.Side, p.X, p.Y, _area.Width, _area.Height) <= limit;
         if (!near) { _dwell = DateTime.MaxValue; return; }
-        if (_dwell == DateTime.MaxValue) _dwell = DateTime.UtcNow.AddMilliseconds(250);
-        else if (DateTime.UtcNow >= _dwell) { _dwell = DateTime.MaxValue; OpenPeek(); }
+        if (_dwell == DateTime.MaxValue) _dwell = DateTime.UtcNow.AddMilliseconds(carrying ? 450 : 250);
+        else if (DateTime.UtcNow >= _dwell) { _dwell = DateTime.MaxValue; _pinnedUntil = carrying ? DateTime.UtcNow.AddSeconds(1.5) : default; OpenPanel(carrying ? Panel.Shelf : Panel.Peek); }
     }
 
     void CloseWhenLeft()
@@ -447,7 +555,7 @@ sealed class NotchWindow : Window, IHost
         var inside = _shell.Dock.Place(_shell.W.Target, _shell.H.Target, _area.Width, _area.Height).Contains(p.X, p.Y, 12);
         var now = DateTime.UtcNow;
         if (inside) _pinnedUntil = default;
-        if (inside || _typing || _press != null || now < _pinnedUntil) { _outside = DateTime.MaxValue; return; }
+        if (inside || _typing || Carrying || _press != null || now < _pinnedUntil) { _outside = DateTime.MaxValue; return; }
         if (_outside == DateTime.MaxValue) _outside = now.AddMilliseconds(300);
         else if (now >= _outside) { _outside = DateTime.MaxValue; Dismiss(); }
     }

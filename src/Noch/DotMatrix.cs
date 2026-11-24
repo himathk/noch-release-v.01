@@ -5,7 +5,7 @@ using Noch.Core;
 
 namespace Noch;
 
-enum Dots { Idle, Think, Read, Search, Edit, Run, Need, Ask, Done, Fail, Music }
+enum Dots { Idle, Think, Read, Search, Edit, Run, Need, Ask, Done, Fail, Music, Timer, Meeting, Bell, Speaker, Bolt }
 
 /// The 5 by 5 dot display. The pattern says what an agent is doing.
 sealed class DotMatrix : FrameworkElement
@@ -15,12 +15,18 @@ sealed class DotMatrix : FrameworkElement
     static readonly DispatcherTimer Clock = new(DispatcherPriority.Render) { Interval = TimeSpan.FromMilliseconds(125) };
     static readonly HashSet<DotMatrix> Live = [];
     static readonly double[] Bars = [1, 2, 1, 2, 1];
+    static double _loudest;
     static readonly Random Rng = new();
     static int _tick;
     public static bool MusicPlaying;
     /// Holds every display on one good-looking step, for pictures.
     public static void Pose() { _pose = true; foreach (var (b, i) in new[] { 3.0, 5, 2, 4, 1 }.Select((b, i) => (b, i))) Bars[i] = b; }
     static bool _pose;
+
+    double _level = 1;
+    /// How much is left, for the timer.
+    public double Level { get => _level; set { if (Math.Abs(_level - value) < .0005) return; _level = value; if (_kind == Dots.Timer) InvalidateVisual(); } }
+    public bool Still { get; set; }
 
     readonly double _scale;
     int _start;
@@ -54,14 +60,17 @@ sealed class DotMatrix : FrameworkElement
         if (Live.Count > 0 && SystemParameters.ClientAreaAnimation) Clock.Start(); else Clock.Stop();
     }
 
-    bool Moving => !_pose && _kind switch { Dots.Idle => false, Dots.Done => _tick - _start <= 6, Dots.Music => true, _ => true };
+    bool Moving => !_pose && !Still && _kind switch { Dots.Idle or Dots.Meeting or Dots.Bell or Dots.Speaker or Dots.Bolt => false, Dots.Done => _tick - _start <= 6, Dots.Music => true, _ => true };
 
     static void UpdateBars()
     {
-        var p = MusicPlaying ? Math.Sqrt(AudioMeter.Peak()) : 0;
+        // Measured against the loudest recent moment, so quiet music still moves the bars.
+        var peak = MusicPlaying ? AudioMeter.Peak() : 0;
+        _loudest = Math.Max(peak, _loudest * .99);
+        var p = peak / Math.Max(_loudest, .004);
         for (var i = 0; i < 5; i++)
         {
-            var want = MusicPlaying ? 1 + 4.2 * p * (.45 + .55 * Rng.NextDouble()) * (i is 1 or 2 ? 1 : .88) : 1;
+            var want = 1 + 4 * p * p * (.35 + .65 * Rng.NextDouble());
             Bars[i] = want > Bars[i] ? want : Math.Max(want, Bars[i] - 1.3);
         }
     }
@@ -78,7 +87,7 @@ sealed class DotMatrix : FrameworkElement
     static readonly int[] Breath = [4, 3, 2, 3, 4];
     static bool Bit(string s, int r, int c) => s[r * 5 + c] == '1';
 
-    static int Level(Dots k, int r, int c, int t)
+    int Lit(Dots k, int r, int c, int t)
     {
         int slow = t / 2 % 5, f = t % 5;
         switch (k)
@@ -93,6 +102,16 @@ sealed class DotMatrix : FrameworkElement
             case Dots.Fail: return Bit("1000101010001000101010001", r, c) ? Breath[slow] : 0;
             case Dots.Done: { var i = Array.IndexOf(Tick, r * 5 + c); return i >= 0 && i <= t ? 4 : 0; }
             case Dots.Music: { var on = 5 - r <= (int)Math.Round(Bars[c]); return on ? 5 - r == (int)Math.Round(Bars[c]) ? 4 : 3 : 0; }
+            case Dots.Timer:
+            {
+                // One dot for every twenty-fifth. The one burning down now breathes.
+                var left = _level * 25; var full = (int)Math.Floor(left - 1e-9); var i = r * 5 + c;
+                return i < full ? 4 : i == full && left > 0 ? Still ? 3 : Breath[slow] : 0;
+            }
+            case Dots.Meeting: return Bit("1111110001101011000111111", r, c) ? r == 2 && c == 2 ? 4 : 3 : 0;
+            case Dots.Bell: return Bit("0010001110011101111100100", r, c) ? 3 : 0;
+            case Dots.Speaker: return Bit("0001000110111100011000010", r, c) ? 3 : 0;
+            case Dots.Bolt: return Bit("0001000100011100010001000", r, c) ? 4 : 0;
             default: return r == 2 && c == 2 ? 2 : 0;
         }
     }
@@ -105,10 +124,10 @@ sealed class DotMatrix : FrameworkElement
 
     protected override void OnRender(DrawingContext dc)
     {
-        var tone = For(_kind switch { Dots.Need or Dots.Ask => Theme.NeedColor, Dots.Done => Theme.DoneColor, Dots.Fail => Theme.FailColor, Dots.Music => _tint, _ => Theme.TextColor });
+        var tone = For(_kind switch { Dots.Need or Dots.Ask => Theme.NeedColor, Dots.Done => Theme.DoneColor, Dots.Fail => Theme.FailColor, Dots.Music or Dots.Timer => _tint, Dots.Bolt => Theme.DoneColor, _ => Theme.TextColor });
         var t = _pose ? _kind is Dots.Done ? 9 : _kind is Dots.Edit ? 7 : _kind is Dots.Need or Dots.Ask or Dots.Fail ? 0 : 3 : (SystemParameters.ClientAreaAnimation ? _tick - _start : _kind == Dots.Done ? 9 : 3);
         for (var r = 0; r < 5; r++)
             for (var c = 0; c < 5; c++)
-                dc.DrawEllipse(tone[Math.Clamp(Level(_kind, r, c, t), 0, 4)], null, new Point((c * 4 + 1.5) * _scale, (r * 4 + 1.5) * _scale), 1.5 * _scale, 1.5 * _scale);
+                dc.DrawEllipse(tone[Math.Clamp(Lit(_kind, r, c, t), 0, 4)], null, new Point((c * 4 + 1.5) * _scale, (r * 4 + 1.5) * _scale), 1.5 * _scale, 1.5 * _scale);
     }
 }

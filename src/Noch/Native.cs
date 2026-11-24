@@ -45,6 +45,15 @@ static class Native
     [DllImport("user32")] static extern int GetSystemMetrics(int i);
     public static void Move(IntPtr h, int x, int y) => SetWindowPos(h, IntPtr.Zero, x, y, 0, 0, 0x1 | 0x4 | 0x10);
 
+    [StructLayout(LayoutKind.Sequential)] struct GUITHREADINFO { public int cbSize, flags; public IntPtr active, focus, capture, menuOwner, moveSize, caret; public RECT rc; }
+    [DllImport("user32")] static extern bool GetGUIThreadInfo(uint thread, ref GUITHREADINFO i);
+    /// True while a window is being moved or resized by hand.
+    public static bool MovingWindow()
+    {
+        var i = new GUITHREADINFO { cbSize = Marshal.SizeOf<GUITHREADINFO>() };
+        return GetGUIThreadInfo(0, ref i) && (i.flags & 2) != 0;
+    }
+
     public static void KeepOnTop(IntPtr h) => SetWindowPos(h, new IntPtr(-1), 0, 0, 0, 0, 0x1 | 0x2 | 0x10);
 
     public static void SetExStyle(IntPtr h, int flag, bool on)

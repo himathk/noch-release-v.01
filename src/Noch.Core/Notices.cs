@@ -46,7 +46,7 @@ public sealed class Notices
         {
             _list.RemoveAll(x => x.Id == n.Id);
             _list.Add(n);
-            while (_list.Count > Max) _list.Remove(_list.OrderBy(x => x.Kind).ThenBy(x => x.At).First());
+            while (_list.Count > Max) _list.Remove(_list.Where(x => x != n).OrderBy(x => x.Kind).ThenBy(x => x.At).First());
         }
         Changed?.Invoke();
     }
@@ -68,19 +68,23 @@ public sealed class Notices
     readonly Dictionary<string, DateTime> _shownAt = [];
 
     /// Time only counts while a message is the one on screen, and not while the pointer is on it.
-    public void Tick(DateTime now, bool hold)
+    /// One that never got its turn is dropped once it is old news.
+    public void Tick(DateTime now, bool visible, bool held)
     {
         var changed = false;
+        var hold = held || !visible;
         lock (_gate)
         {
             foreach (var gone in _shownAt.Keys.Where(k => _list.All(n => n.Id + n.At.Ticks != k)).ToList()) _shownAt.Remove(gone);
+            if (!visible) changed = _list.RemoveAll(n => now - n.At > TimeSpan.FromMinutes(n.Kind == NoticeKind.Meeting ? 5 : 2)) > 0;
             var c = Current;
-            if (c is null) { _held = null; return; }
+            if (c is null) { _held = null; goto done; }
             var key = c.Id + c.At.Ticks;
             if (!_shownAt.TryGetValue(key, out var since)) _shownAt[key] = since = now;
-            if (hold) { _held ??= now; return; }
+            if (hold) { _held ??= now; goto done; }
             if (_held is { } h) { since += now - h; _shownAt[key] = since; _held = null; }
             if (now - since >= c.Life) { _list.Remove(c); _shownAt.Remove(key); changed = true; }
+            done:;
         }
         if (changed) Changed?.Invoke();
     }

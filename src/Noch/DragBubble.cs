@@ -318,7 +318,18 @@ sealed class DragScene
             if (frames < 8) return;
             CompositionTarget.Rendering -= Away;
             // Hidden only after the empty picture is up, so an old one cannot flash next time.
-            if (mine == _shown) foreach (var w in _edges!) w.Hide();
+            if (mine != _shown) return;
+            foreach (var w in _edges!) w.Hide();
+            // Kept for the next drag, then given back if there is none.
+            var later = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
+            later.Tick += (_, _) =>
+            {
+                later.Stop();
+                if (mine != _shown || _edges is null) return;
+                foreach (var w in _edges) w.Close();
+                _edges = null;
+            };
+            later.Start();
         }
         CompositionTarget.Rendering += Away;
     }

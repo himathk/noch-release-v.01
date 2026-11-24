@@ -15,6 +15,8 @@ public sealed class FocusTimer(FocusState state)
     public event Action? Changed;
     /// True when a break just ended, false when a focus block did.
     public event Action<bool>? Finished;
+    /// How long the block that just finished was.
+    public TimeSpan LastLength { get; private set; }
 
     public FocusState State => state;
     public bool Running => state.EndsAt != null;
@@ -69,6 +71,7 @@ public sealed class FocusTimer(FocusState state)
     {
         if (state.EndsAt is not { } end || now < end) return;
         var wasBreak = state.Break;
+        LastLength = TimeSpan.FromSeconds(state.Length);
         Stop();
         // If the PC was off or asleep when it ended, there is nothing left to announce.
         if (now - end < TimeSpan.FromMinutes(10)) Finished?.Invoke(wasBreak);

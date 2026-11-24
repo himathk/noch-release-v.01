@@ -299,15 +299,18 @@ public sealed class OvernightTests : IDisposable
         n.Post(new("a", NoticeKind.App, "first"));
         n.Post(new("m", NoticeKind.Meeting, "urgent") { Life = TimeSpan.FromSeconds(3) });
         Assert.Equal("m", n.Current!.Id);
-        n.Tick(T0, false);
-        n.Tick(T0.AddSeconds(4), true);
-        n.Tick(T0.AddSeconds(60), true);
+        n.Tick(T0, true, false);
+        n.Tick(T0.AddSeconds(4), true, true);
+        n.Tick(T0.AddSeconds(60), true, true);
         Assert.Equal("m", n.Current!.Id);
-        n.Tick(T0.AddSeconds(61), false);
+        n.Tick(T0.AddSeconds(61), true, false);
         Assert.Equal("a", n.Current!.Id);
         for (var i = 0; i < 20; i++) n.Post(new("x" + i, NoticeKind.App, "x"));
         n.Post(new("v", NoticeKind.Volume, "v"));
         Assert.Equal("v", n.Current!.Id);
+        // Covered by something else for a long while: not worth showing any more.
+        n.Tick(DateTime.UtcNow.AddMinutes(3), false, false);
+        Assert.Null(n.Current);
     }
 
     [Fact]
