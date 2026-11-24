@@ -253,7 +253,7 @@ sealed class ShelfTile : Border
         var n = i.Name;
         if (i.Kind != ShelfKind.File || n.Length <= 14) return n;
         var ext = System.IO.Path.GetExtension(n);
-        return ext.Length is 0 or > 6 ? n : n[..Math.Max(3, 12 - ext.Length)].TrimEnd() + "…" + ext;
+        return ext.Length is 0 or > 6 ? n : n[..Math.Max(3, 12 - ext.Length)].TrimEnd() + "…" + ext.TrimStart('.');
     }
 
     static void Copy(IHost h, string text)

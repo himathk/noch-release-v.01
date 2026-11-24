@@ -17,7 +17,7 @@ namespace Noch;
 sealed class NotchWindow : Window, IHost
 {
     readonly Shell _shell = new();
-    readonly DispatcherTimer _tick = new() { Interval = TimeSpan.FromMilliseconds(250) }, _poll = new() { Interval = TimeSpan.FromMilliseconds(80) }, _openSoon = new() { Interval = TimeSpan.FromMilliseconds(150) };
+    readonly DispatcherTimer _tick = new() { Interval = TimeSpan.FromMilliseconds(250) }, _poll = new() { Interval = TimeSpan.FromMilliseconds(100) }, _openSoon = new() { Interval = TimeSpan.FromMilliseconds(150) };
     readonly Settings _settings;
     IntPtr _hwnd;
     View? _view;
@@ -457,7 +457,7 @@ sealed class NotchWindow : Window, IHost
         _view?.Tick();
         if (_drag is null && _view is { } v && v is not StripView && (Math.Abs(v.DesiredSize.Height - _shell.H.Target) > .5 && v.DesiredSize.Height < Height - 20)) Resize();
         if (_drag is null && SystemParameters.WorkArea != _area) { Place(); Sync(); }
-        if (now - _lastProbe > TimeSpan.FromMilliseconds(450))
+        if (now - _lastProbe > TimeSpan.FromMilliseconds(700))
         {
             _lastProbe = now;
             var b = _shell.Body();

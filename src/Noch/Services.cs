@@ -102,19 +102,25 @@ sealed class Sounds(Settings settings)
 /// Speaker volume, changed by scrolling over the music.
 static class Volume
 {
+    static IAudioEndpointVolume Speakers()
+    {
+        var e = (IMMDeviceEnumerator)new MMDeviceEnumerator();
+        e.GetDefaultAudioEndpoint(0, 1, out var device);
+        var iid = typeof(IAudioEndpointVolume).GUID;
+        device.Activate(ref iid, 1, IntPtr.Zero, out var o);
+        return (IAudioEndpointVolume)o;
+    }
+
+    public static float Get() { Speakers().GetMasterVolumeLevelScalar(out var now); return now; }
+    public static void Set(float to) { var none = Guid.Empty; Speakers().SetMasterVolumeLevelScalar(to, ref none); }
+
+    /// In steps of two, like the volume keys. Null when there is no sound device.
     public static double? Change(double by)
     {
         try
         {
-            var e = (IMMDeviceEnumerator)new MMDeviceEnumerator();
-            e.GetDefaultAudioEndpoint(0, 1, out var device);
-            var iid = typeof(IAudioEndpointVolume).GUID;
-            device.Activate(ref iid, 1, IntPtr.Zero, out var o);
-            var v = (IAudioEndpointVolume)o;
-            v.GetMasterVolumeLevelScalar(out var now);
-            var to = (float)Math.Clamp(Math.Round((now + by) * 50) / 50, 0, 1);
-            var none = Guid.Empty;
-            v.SetMasterVolumeLevelScalar(to, ref none);
+            var to = (float)Math.Clamp(Math.Round((Get() + by) * 50) / 50, 0, 1);
+            Set(to);
             return to;
         }
         catch { return null; }

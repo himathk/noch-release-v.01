@@ -31,6 +31,12 @@ static class Checks
                 });
             Check("sounds at zero volume are silent", () => Sounds.Wave(Sounds.Tone.Finished, 0).Skip(44).All(b => b == 0));
 
+            Check("scrolling changes the volume by a step, and it can be put back exactly", () =>
+            {
+                var before = Volume.Get();
+                try { var to = Volume.Change(before > .5 ? -.02 : .02); return to is { } x && Math.Abs(Volume.Get() - x) < .011 && Math.Abs(x - before) < .031; }
+                finally { Volume.Set(before); }
+            });
             var power = new PowerWatch(notices, () => true);
             Check("no battery message at start", () => { power.Look(true, 90); return notices.Current is null; });
             Check("unplugging says so", () => { power.Look(false, 90); return notices.Current?.Title == "On battery"; });
