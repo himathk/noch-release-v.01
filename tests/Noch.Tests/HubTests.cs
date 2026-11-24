@@ -141,24 +141,16 @@ public class HubTests
     }
 
     [Theory]
-    [InlineData(true, false, false, false, NotchState.Hidden)]
-    [InlineData(false, true, true, true, NotchState.Strip)]
-    [InlineData(false, true, true, false, NotchState.Both)]
-    [InlineData(false, false, true, true, NotchState.Both)]
-    [InlineData(false, true, false, false, NotchState.Agent)]
-    public async Task Chooses_by_screen(bool full, bool covered, bool music, bool shrink, NotchState want)
+    [InlineData(true, false, false, NotchState.Hidden)]
+    [InlineData(false, true, true, NotchState.Strip)]
+    [InlineData(false, false, true, NotchState.Both)]
+    [InlineData(false, false, false, NotchState.Agent)]
+    public async Task Chooses_by_screen(bool full, bool covered, bool music, NotchState want)
     {
         var hub = new AgentHub();
         await hub.HandleAsync(E("UserPromptSubmit"));
-        Assert.Equal(want, Presenter.Choose(hub, new Scene(full, covered, music, false, false, shrink)));
+        Assert.Equal(want, Presenter.Choose(hub, new Scene(full, covered, music, false, false)));
     }
-
-    [Theory]
-    [InlineData(false, false, NotchState.Idle)]
-    [InlineData(true, false, NotchState.Music)]
-    [InlineData(false, true, NotchState.Rest)]
-    public void Never_goes_below_the_full_bar_unless_asked(bool music, bool shrink, NotchState want) =>
-        Assert.Equal(want, Presenter.Choose(new AgentHub(), new Scene(false, true, music, false, false, shrink)));
 
     [Fact]
     public void Long_commands_are_never_cut_in_the_approval()

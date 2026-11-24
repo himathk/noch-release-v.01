@@ -137,7 +137,7 @@ static class Program
                 Item("Connect Cursor", () => Toggle(_cursor, "Cursor"), _cursor.Connected, _cursor.AgentInstalled);
                 menu.Items.Add(new Forms.ToolStripSeparator());
                 Item("Start with Windows", () => Settings.StartsWithWindows = !Settings.StartsWithWindows, Settings.StartsWithWindows);
-                Item("Shrink when idle or over windows", () => { _settings.Shrink = !_settings.Shrink; _settings.Save(); _window!.Sync(); }, _settings.Shrink);
+                Item("Show the full bar over windows", () => { _settings.AlwaysFull = !_settings.AlwaysFull; _settings.Save(); _window!.Sync(); }, _settings.AlwaysFull);
                 menu.Items.Add(new Forms.ToolStripSeparator());
                 if (_ready != null) Item("Restart to update", () => _updates!.ApplyUpdatesAndRestart(_ready));
                 Item("Quit", Quit);
