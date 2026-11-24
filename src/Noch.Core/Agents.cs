@@ -54,7 +54,7 @@ public sealed class AgentSession
 {
     public required string Key { get; init; }
     public required string Source { get; init; }
-    public string Agent => Source == "cursor" ? "Cursor" : "Claude Code";
+    public string Agent => Source switch { "cursor" => "Cursor", "codex" => "Codex", _ => "Claude Code" };
     public string Cwd { get; internal set; } = "";
     public string Project => Cwd.Length == 0 ? Agent : Path.GetFileName(Cwd.TrimEnd('\\', '/')) is { Length: > 0 } n ? n : Cwd;
     public Activity Activity { get; internal set; } = Activity.Idle;
@@ -65,9 +65,20 @@ public sealed class AgentSession
     public IReadOnlyList<int> Pids { get; internal set; } = [];
     /// The agent itself, not the shells between it and our helper. 0 when unknown.
     public int AgentPid { get; internal set; }
+    public string? TranscriptPath { get; internal set; }
+    /// Size of the conversation in tokens, when known.
+    public long? ContextTokens { get; set; }
+    /// The last thing it said, in plain words.
+    public string LastMessage { get; internal set; } = "";
     internal long LastTicks;
     public bool Working => Activity is Activity.Thinking or Activity.Reading or Activity.Searching or Activity.Editing or Activity.Running;
 }
 
 /// A short message that drops down by itself: an agent finished or stopped.
-public sealed record Toast(string SessionKey, bool Failed, string Title, string Detail, DateTime At);
+public sealed record Toast(string SessionKey, bool Failed, string Title, string Detail, DateTime At)
+{
+    public string Body { get; init; } = "";
+    public TimeSpan Life => TimeSpan.FromSeconds(Body.Length > 0 ? 8 : 4);
+}
+
+public enum Signal { NeedsYou, Finished, Failed }

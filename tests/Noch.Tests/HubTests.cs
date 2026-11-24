@@ -42,7 +42,7 @@ public class HubTests
     {
         var hub = new AgentHub();
         var a = hub.HandleAsync(E("PermissionRequest", Bash));
-        Assert.Equal(NotchState.Approval, Presenter.Choose(hub, new Scene(false, true, true, false, false)));
+        Assert.Equal(NotchState.Approval, Presenter.Choose(hub, new Scene(false, true, Panel.None, Music: true)));
         Assert.Equal("npm test", hub.Pending[0].Command);
         Assert.False(a.IsCompleted);
         hub.Allow(hub.Pending[0]);
@@ -143,13 +143,13 @@ public class HubTests
     [Theory]
     [InlineData(true, false, false, NotchState.Hidden)]
     [InlineData(false, true, true, NotchState.Strip)]
-    [InlineData(false, false, true, NotchState.Both)]
-    [InlineData(false, false, false, NotchState.Agent)]
+    [InlineData(false, false, true, NotchState.Compact)]
+    [InlineData(false, false, false, NotchState.Compact)]
     public async Task Chooses_by_screen(bool full, bool covered, bool music, NotchState want)
     {
         var hub = new AgentHub();
         await hub.HandleAsync(E("UserPromptSubmit"));
-        Assert.Equal(want, Presenter.Choose(hub, new Scene(full, covered, music, false, false)));
+        Assert.Equal(want, Presenter.Choose(hub, new Scene(full, covered, Panel.None, Music: music)));
     }
 
     [Fact]

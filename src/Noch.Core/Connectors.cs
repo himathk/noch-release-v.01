@@ -15,6 +15,8 @@ public abstract class Connector(string path, string hookExe)
 
     protected abstract void AddHooks(JsonObject root);
     protected abstract bool IsOurs(JsonNode? entry);
+    /// Anything beyond hooks that was added.
+    protected virtual bool StripExtras(JsonObject root) => false;
 
     public bool Connected
     {
@@ -37,8 +39,17 @@ public abstract class Connector(string path, string hookExe)
     {
         if (!File.Exists(path)) return;
         var root = Load();
-        if (Strip(root)) Save(root);
+        if (Strip(root) | StripExtras(root)) Save(root);
     }
+
+    protected void Change(Action<JsonObject> a)
+    {
+        var root = Load();
+        a(root);
+        Save(root);
+    }
+
+    protected JsonObject? Peek() { try { return File.Exists(path) ? Load() : null; } catch { return null; } }
 
     JsonObject Load()
     {
@@ -94,6 +105,28 @@ public sealed class ClaudeConnector(string configDir, string hookExe) : Connecto
     protected override bool IsOurs(JsonNode? entry) => entry is JsonObject o && o["hooks"] is JsonArray a
         && a.Any(h => h is JsonObject x && ((string?)x["command"] ?? "").Contains(Mark, StringComparison.OrdinalIgnoreCase));
 
+    protected override bool StripExtras(JsonObject root)
+    {
+        if (!OurStatusLine(root)) return false;
+        root.Remove("statusLine");
+        return true;
+    }
+
+    static bool OurStatusLine(JsonObject? root) => ((string?)(root?["statusLine"] as JsonObject)?["command"] ?? "").Contains(Mark, StringComparison.OrdinalIgnoreCase);
+
+    /// Claude Code in a terminal tells its status line how much of the plan is used. Nothing else is told.
+    public bool StatusLineOn => OurStatusLine(Peek());
+    public bool HasOtherStatusLine => Peek() is { } r && r["statusLine"] != null && !OurStatusLine(r);
+
+    public void SetStatusLine(bool on) => Change(root =>
+    {
+        if (root["statusLine"] != null && !OurStatusLine(root)) throw new InvalidOperationException("You already have your own status line, so it was left alone.");
+        root.Remove("statusLine");
+        if (!on) return;
+        var exe = HookExe.Replace('\\', '/');
+        root["statusLine"] = new JsonObject { ["type"] = "command", ["command"] = (exe.Contains(' ') ? $"\"{exe}\"" : exe) + " status" };
+    });
+
     JsonObject Entry(int timeout, string? matcher = null, bool background = false, string? status = null)
     {
         // Exec form: no shell in between, so spaces in the path need no quoting.
@@ -131,5 +164,31 @@ public sealed class CursorConnector(string cursorDir, string hookExe) : Connecto
         root["version"] ??= 1;
         // Cursor runs hook commands through PowerShell on Windows.
         foreach (var ev in Events) List(root, ev).Add(new JsonObject { ["command"] = $"& '{HookExe.Replace("'", "''")}' cursor", ["timeout"] = 5 });
+    }
+}
+
+/// Codex uses nearly the same hooks as Claude Code. It asks the user to trust them once, with /hooks.
+public sealed class CodexConnector(string codexDir, string hookExe) : Connector(Path.Combine(codexDir, "hooks.json"), hookExe)
+{
+    public static string DefaultDir => Environment.GetEnvironmentVariable("CODEX_HOME") is { Length: > 0 } d ? d
+        : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".codex");
+
+    static readonly string[] Background = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "SubagentStart", "SubagentStop", "Stop"];
+
+    protected override bool IsOurs(JsonNode? entry) => entry is JsonObject o && o["hooks"] is JsonArray a
+        && a.Any(h => h is JsonObject x && ((string?)x["command"] ?? "").Contains(Mark, StringComparison.OrdinalIgnoreCase));
+
+    JsonObject Entry(int timeout, bool background)
+    {
+        var command = $"\"{HookExe}\" codex";
+        var h = new JsonObject { ["type"] = "command", ["command"] = command, ["commandWindows"] = command, ["timeout"] = timeout };
+        if (background) h["async"] = true;
+        return new JsonObject { ["hooks"] = new JsonArray(h) };
+    }
+
+    protected override void AddHooks(JsonObject root)
+    {
+        foreach (var ev in Background) List(root, ev).Add(Entry(10, true));
+        List(root, "PermissionRequest").Add(Entry(600, false));
     }
 }

@@ -1,8 +1,17 @@
 namespace Noch.Core;
 
-public enum NotchState { Hidden, Rest, Strip, Music, Agent, Both, Approval, Question, Done, Failed, Peek, Player }
+public enum NotchState { Hidden, Rest, Strip, Compact, Approval, Question, Done, Failed, Notice, Peek, Player, Focus, Shelf }
 
-public sealed record Scene(bool Fullscreen, bool Covered, bool MusicVisible, bool PeekOpen, bool PlayerOpen);
+/// What the user has opened by hand.
+public enum Panel { None, Peek, Player, Focus, Shelf }
+
+/// What the bar is carrying.
+[Flags] public enum Show { None = 0, Agent = 1, Music = 2, Timer = 4, Meeting = 8 }
+
+public sealed record Scene(bool Fullscreen, bool Covered, Panel Panel, bool Music = false, bool Timer = false, bool Meeting = false, Notice? Notice = null, bool Quiet = false)
+{
+    public Show Bar(bool agents) => (agents ? Show.Agent : 0) | (Music ? Show.Music : 0) | (Timer ? Show.Timer : 0) | (Meeting ? Show.Meeting : 0);
+}
 
 /// Decides the one thing the notch shows right now.
 public static class Presenter
@@ -11,14 +20,20 @@ public static class Presenter
     {
         var pending = hub.Pending;
         if (s.Fullscreen) return pending.Count > 0 ? NotchState.Strip : NotchState.Hidden;
-        if (s.PlayerOpen) return NotchState.Player;
-        if (s.PeekOpen) return NotchState.Peek;
+        switch (s.Panel)
+        {
+            case Panel.Player: return NotchState.Player;
+            case Panel.Peek: return NotchState.Peek;
+            case Panel.Focus: return NotchState.Focus;
+            case Panel.Shelf: return NotchState.Shelf;
+        }
         if (pending.Count > 0) return pending[0].IsQuestion ? NotchState.Question : NotchState.Approval;
-        if (hub.Toast is { } t) return t.Failed ? NotchState.Failed : NotchState.Done;
-        var agents = hub.Sessions.Any(Active);
-        if (!agents && !s.MusicVisible) return NotchState.Rest;
-        if (s.Covered) return NotchState.Strip;
-        return agents ? s.MusicVisible ? NotchState.Both : NotchState.Agent : NotchState.Music;
+        if (s.Notice is { Kind: NoticeKind.Meeting or NoticeKind.Volume }) return NotchState.Notice;
+        // A focus block only lets through what has gone wrong.
+        if (hub.Toast is { } t && (t.Failed || !s.Quiet)) return t.Failed ? NotchState.Failed : NotchState.Done;
+        if (s.Notice is { } n && (!s.Quiet || n.Kind is NoticeKind.Timer or NoticeKind.Warning)) return NotchState.Notice;
+        if (s.Bar(hub.Sessions.Any(Active)) == Show.None) return NotchState.Rest;
+        return s.Covered ? NotchState.Strip : NotchState.Compact;
     }
 
     public static bool NeedsYou(AgentSession s) => s.Activity is Activity.NeedsApproval or Activity.Question or Activity.Attention;

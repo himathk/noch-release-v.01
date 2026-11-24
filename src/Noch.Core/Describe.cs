@@ -1,6 +1,7 @@
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 
 namespace Noch.Core;
 
@@ -66,6 +67,30 @@ public static class Describe
     };
 
     static string Prefix(string p, string s) => string.Join('\n', s.Replace("\r", "").Split('\n').Select(l => p + l));
+
+    /// The first couple of sentences of an answer, without its formatting.
+    public static string Summary(string? markdown, int max = 220)
+    {
+        if (string.IsNullOrWhiteSpace(markdown)) return "";
+        var lines = new List<string>();
+        var code = false;
+        foreach (var raw in markdown.Replace("\r", "").Split('\n'))
+        {
+            var l = raw.Trim();
+            if (l.StartsWith("```", StringComparison.Ordinal)) { code = !code; continue; }
+            if (code || l.Length == 0 || l.StartsWith('|') || l.All(c => c is '-' or '*' or '_' or '=')) continue;
+            var heading = l.StartsWith('#');
+            l = Regex.Replace(l, @"^(#+|[-*+>]|\d+[.)])\s+", "");
+            l = Regex.Replace(l, @"!?\[([^\]]*)\]\([^)]*\)", "$1");
+            l = Regex.Replace(l, @"(\*\*|__|`|~~)", "");
+            l = Regex.Replace(l, @"(?<!\w)[*_](\S(?:.*?\S)?)[*_](?!\w)", "$1");
+            if (l.Length == 0) continue;
+            if (heading || !".!?:;,".Contains(l[^1])) l += ".";
+            lines.Add(l);
+            if (lines.Sum(x => x.Length) > max * 2) break;
+        }
+        return OneLine(string.Join(' ', lines), max);
+    }
 
     public static string StopReason(string? error) => error switch
     {

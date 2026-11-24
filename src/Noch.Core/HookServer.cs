@@ -6,7 +6,7 @@ using System.Text.Json.Nodes;
 namespace Noch.Core;
 
 /// Listens for noch-hook.exe on a pipe that only the current Windows user can open.
-public sealed class HookServer(AgentHub hub, string? pipeName = null) : IDisposable
+public sealed class HookServer(AgentHub hub, string? pipeName = null, Usage? usage = null) : IDisposable
 {
     static readonly HashSet<string> Shells = new(StringComparer.OrdinalIgnoreCase) { "bash", "sh", "cmd", "powershell", "pwsh", "conhost", "env" };
     const int MaxPayload = 32 * 1024 * 1024;
@@ -44,6 +44,11 @@ public sealed class HookServer(AgentHub hub, string? pipeName = null) : IDisposa
             var answer = "";
             if (header.Length == 3 && Parse(body) is { } json)
             {
+                if (header[0] == "status")
+                {
+                    await Answer(pipe, usage?.Take(json, DateTime.UtcNow) ?? "").ConfigureAwait(false);
+                    return;
+                }
                 var chain = header[2].Split(',', StringSplitOptions.RemoveEmptyEntries).Select(p => p.Split(':')).Select(p => (Pid: int.Parse(p[0]), Name: p[1])).ToList();
                 var agent = chain.FirstOrDefault(p => !Shells.Contains(Path.GetFileNameWithoutExtension(p.Name)));
                 var work = hub.HandleAsync(new HookEvent(header[0], long.Parse(header[1]), [.. chain.Select(p => p.Pid)], json, agent.Pid), gone.Token);
@@ -55,15 +60,20 @@ public sealed class HookServer(AgentHub hub, string? pipeName = null) : IDisposa
                 }
                 answer = await work.ConfigureAwait(false);
             }
-            if (!pipe.IsConnected) return;
-            var bytes = Encoding.UTF8.GetBytes(answer);
-            await pipe.WriteAsync(BitConverter.GetBytes(bytes.Length)).ConfigureAwait(false);
-            await pipe.WriteAsync(bytes).ConfigureAwait(false);
-            await pipe.FlushAsync().ConfigureAwait(false);
-            // Let the client read before the pipe closes under it.
-            pipe.WaitForPipeDrain();
+            await Answer(pipe, answer).ConfigureAwait(false);
         }
         catch { /* a broken client must never take the notch down */ }
+    }
+
+    static async Task Answer(NamedPipeServerStream pipe, string answer)
+    {
+        if (!pipe.IsConnected) return;
+        var bytes = Encoding.UTF8.GetBytes(answer);
+        await pipe.WriteAsync(BitConverter.GetBytes(bytes.Length)).ConfigureAwait(false);
+        await pipe.WriteAsync(bytes).ConfigureAwait(false);
+        await pipe.FlushAsync().ConfigureAwait(false);
+        // Let the client read before the pipe closes under it.
+        pipe.WaitForPipeDrain();
     }
 
     static JsonObject? Parse(byte[] body)

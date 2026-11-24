@@ -3,4 +3,7 @@
     <TargetFramework>$(NochTfm)-windows</TargetFramework>
     <AssemblyName>Noch.Core</AssemblyName>
   </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Ical.Net" Version="5.2.4" />
+  </ItemGroup>
 </Project>
