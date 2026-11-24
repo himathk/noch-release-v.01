@@ -263,6 +263,8 @@ sealed class NotchWindow : Window, IHost
     {
         if (_view is null) return;
         if (_view is StripView strip) { if (Vertical) _view.Height = strip.Wanted; else _view.Width = strip.Wanted; }
+        // Changes deep inside only reach the top through a layout pass; measuring alone would see the old size.
+        _view.UpdateLayout();
         _view.Measure(new Size(_view.Width, double.PositiveInfinity));
         var w = _view.Width; var h = Math.Min(_view.DesiredSize.Height, Height - 20);
         if (w == _shell.W.Target && h == _shell.H.Target && _view.Radius == _shell.R.Target && _view.Ear == _shell.Ear.Target && !_bounce) { _shell.Refresh(); return; }
@@ -443,6 +445,7 @@ sealed class NotchWindow : Window, IHost
     {
         var now = DateTime.UtcNow;
         _view?.Tick();
+        if (_drag is null && _view is { } v && v is not StripView && (Math.Abs(v.DesiredSize.Height - _shell.H.Target) > .5 && v.DesiredSize.Height < Height - 20)) Resize();
         if (_drag is null && SystemParameters.WorkArea != _area) { Place(); Sync(); }
         if (now - _lastProbe > TimeSpan.FromMilliseconds(450))
         {

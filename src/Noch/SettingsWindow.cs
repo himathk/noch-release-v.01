@@ -236,13 +236,20 @@ sealed class SettingsWindow : Window
         </ControlTemplate>
         """);
 
+    /// Reports every way of flipping it: mouse, keyboard and screen readers.
+    sealed class Flip : ToggleButton
+    {
+        public Action<bool> Flipped = _ => { };
+        protected override void OnToggle() { base.OnToggle(); Flipped(IsChecked == true); }
+    }
+
     void Toggle(string title, string detail, Func<bool> get, Action<bool> set, Action<TextBlock>? describe = null)
     {
         Row(title, detail, out var d, out var right);
-        var t = new ToggleButton { Template = Switch, Cursor = Cursors.Hand, IsChecked = get(), FocusVisualStyle = null };
+        var t = new Flip { Template = Switch, Cursor = Cursors.Hand, IsChecked = get(), FocusVisualStyle = null };
         AutomationProperties.SetName(t, title);
         void Live() { t.IsChecked = get(); describe?.Invoke(d); if (d.Text.Length == 0) d.Visibility = Visibility.Collapsed; else d.Visibility = Visibility.Visible; }
-        t.Click += (_, _) => { set(t.IsChecked == true); foreach (var a in _live) a(); };
+        t.Flipped = on => { set(on); foreach (var a in _live) a(); };
         right.Child = t;
         _live.Add(Live); Live();
     }
