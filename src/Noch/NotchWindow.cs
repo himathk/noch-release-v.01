@@ -188,7 +188,17 @@ sealed class NotchWindow : Window, IHost
         };
         if (key != _key)
         {
-            View? next = State switch
+            View? next;
+            try { next = Make(); }
+            catch (Exception e)
+            {
+                // Something in the request could not be drawn. The terminal can still ask.
+                Program.Log(e);
+                if (State is NotchState.Approval or NotchState.Question && pending != null) Hub.PassOn(pending);
+                else { _panel = Panel.None; if (notice != null) S.Notices.Dismiss(notice.Id); }
+                return;
+            }
+            View? Make() => State switch
             {
                 NotchState.Hidden => new RestView(this, true),
                 NotchState.Rest => new RestView(this, false),
@@ -520,7 +530,7 @@ sealed class NotchWindow : Window, IHost
         if (Carrying) return;
         try
         {
-            if (e.Data.GetData(DataFormats.FileDrop) is string[] files) S.Shelf.Add(files.Reverse().Select(f => new ShelfItem(ShelfKind.File, f)));
+            if (e.Data.GetData(DataFormats.FileDrop) is string[] files) S.Shelf.Add(Enumerable.Reverse(files).Select(f => new ShelfItem(ShelfKind.File, f)));
             else if (Shelf.FromText(e.Data.GetData(DataFormats.UnicodeText) as string) is { } item) S.Shelf.Add([item]);
         }
         catch (Exception ex) { Program.Log(ex); }

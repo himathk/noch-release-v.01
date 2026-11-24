@@ -68,6 +68,18 @@ public static class Describe
 
     static string Prefix(string p, string s) => string.Join('\n', s.Replace("\r", "").Split('\n').Select(l => p + l));
 
+    /// Makes characters that hide or reorder text show up, so a command cannot look like something it is not.
+    public static string Visible(string s)
+    {
+        if (!s.Any(Sneaky)) return s;
+        var sb = new System.Text.StringBuilder(s.Length + 32);
+        foreach (var c in s) if (Sneaky(c)) sb.Append($"[U+{(int)c:X4}]"); else sb.Append(c);
+        return sb.ToString();
+    }
+
+    static bool Sneaky(char c) => c is >= '\u202A' and <= '\u202E' or >= '\u2066' and <= '\u2069' or >= '\u200B' and <= '\u200F' or '\u061C' or '\uFEFF' or '\u2060' or '\u00AD' or '\u0085' or '\u2028' or '\u2029'
+        || c < ' ' && c is not ('\n' or '\r' or '\t') || c == '\u007F';
+
     /// The first couple of sentences of an answer, without its formatting.
     public static string Summary(string? markdown, int max = 220)
     {

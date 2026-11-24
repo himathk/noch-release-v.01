@@ -275,6 +275,27 @@ public sealed class OvernightTests : IDisposable
         Assert.Throws<InvalidOperationException>(() => c.SetStatusLine(false));
     }
 
+    [Theory]
+    [InlineData("{}")]
+    [InlineData("{\"questions\":[]}")]
+    [InlineData("{\"questions\":[{\"question\":7,\"options\":\"no\",\"multiSelect\":\"yes\"}]}")]
+    [InlineData("{\"questions\":\"x\"}")]
+    public async Task Unreadable_questions_go_to_the_terminal_unanswered(string input)
+    {
+        var hub = new AgentHub();
+        Assert.Equal("", await hub.HandleAsync(E("a", "PreToolUse", "\"tool_name\":\"AskUserQuestion\",\"tool_input\":" + input)));
+        Assert.Empty(hub.Pending);
+        Assert.Equal(Activity.Attention, hub.Sessions[0].Activity);
+    }
+
+    [Fact]
+    public void Hidden_characters_in_a_command_are_shown()
+    {
+        var hub = new AgentHub();
+        _ = hub.HandleAsync(E("a", "PermissionRequest", "\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"echo \\u202Esafe\\u200B\\u001b[2K\\nsecond\\tline é 😀\"}"));
+        Assert.Equal("echo [U+202E]safe[U+200B][U+001B][2K\nsecond\tline é 😀", hub.Pending[0].Command);
+    }
+
     // ---- what is on screen ----
 
     [Fact]

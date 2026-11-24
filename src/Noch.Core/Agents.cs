@@ -28,7 +28,7 @@ public sealed class PendingRequest
 
     public string Tool => Event.Str("tool_name") ?? "";
     /// The exact thing being approved. Never shortened: the user must be able to see all of it.
-    public string Command => Describe.ApprovalBody(Tool, Event.Input);
+    public string Command => Describe.Visible(Describe.ApprovalBody(Tool, Event.Input));
     public string Title => Describe.ApprovalTitle(Tool);
     public JsonArray? Suggestions => Event.Payload["permission_suggestions"] is JsonArray { Count: > 0 } a ? a : null;
     public IReadOnlyList<Question> Questions => IsQuestion ? Question.Parse(Event.Input) : [];
@@ -38,13 +38,14 @@ public sealed record Question(string Text, bool Multi, IReadOnlyList<(string Lab
 {
     public static IReadOnlyList<Question> Parse(JsonObject input)
     {
+        static string S(JsonNode? n) => n is JsonValue v && v.TryGetValue<string>(out var s) ? s : "";
         var list = new List<Question>();
         foreach (var q in (input["questions"] as JsonArray)?.OfType<JsonObject>() ?? [])
         {
             var opts = new List<(string, string)>();
             foreach (var o in (q["options"] as JsonArray)?.OfType<JsonObject>() ?? [])
-                opts.Add(((string?)o["label"] ?? "", (string?)o["description"] ?? ""));
-            list.Add(new Question((string?)q["question"] ?? "", q["multiSelect"]?.GetValue<bool>() ?? false, opts));
+                if (S(o["label"]) is { Length: > 0 } label) opts.Add((label, S(o["description"])));
+            if (S(q["question"]) is { Length: > 0 } text) list.Add(new Question(text, q["multiSelect"] is JsonValue m && m.TryGetValue<bool>(out var b) && b, opts));
         }
         return list;
     }

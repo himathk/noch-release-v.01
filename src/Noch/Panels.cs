@@ -160,8 +160,16 @@ sealed class ShelfView : View
         all.Children.Add(head); all.Children.Add(_hint);
         all.Children.Add(new ScrollViewer { Content = _tiles, MaxHeight = 330, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Focusable = false });
         Content = new Border { Background = Brushes.Transparent, Child = all };
-        h.S.Shelf.Prune(p => File.Exists(p) || Directory.Exists(p));
+        Tidy(h);
         Update();
+    }
+
+    /// Forgets what has been moved or deleted. Looked up aside, because a network drive can take its time to answer.
+    public static async void Tidy(IHost h)
+    {
+        var paths = h.S.Shelf.Items.Where(i => i.Kind == ShelfKind.File).Select(i => i.Value).ToList();
+        var gone = await Task.Run(() => paths.Where(p => !File.Exists(p) && !Directory.Exists(p)).ToHashSet());
+        if (gone.Count > 0) h.S.Shelf.Prune(p => !gone.Contains(p));
     }
 
     /// Something is being dragged over it.
@@ -260,7 +268,7 @@ sealed class ShelfTile : Border
         h.Carrying = true;
         try { DragDrop.DoDragDrop(this, data, DragDropEffects.Copy | DragDropEffects.Move | DragDropEffects.Link); }
         catch { /* the place it was dropped on refused it */ }
-        finally { h.Carrying = false; h.S.Shelf.Prune(p => File.Exists(p) || Directory.Exists(p)); }
+        finally { h.Carrying = false; ShelfView.Tidy(h); }
     }
 }
 

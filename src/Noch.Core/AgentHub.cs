@@ -86,7 +86,8 @@ public sealed class AgentHub
                 Set(s, Activity.Thinking, "Thinking"); break;
 
             case "PreToolUse" when tool == "AskUserQuestion":
-                if (Busy()) { Set(s, Activity.Attention, "Has a question for you"); return null; }
+                // One that cannot be read here is left for the terminal, never answered by mistake.
+                if (Busy() || Question.Parse(e.Input).Count == 0) { Set(s, Activity.Attention, "Has a question for you"); return null; }
                 return Ask(s, e, question: true);
             case "PreToolUse":
                 Begin(s);

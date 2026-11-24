@@ -222,6 +222,9 @@ sealed class ApprovalView : View
         var body = Col(2);
         body.Children.Add(new ScrollViewer { Content = code, MaxHeight = 144, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Focusable = false });
         var cwd = MonoText(s?.Cwd ?? "", Text3, 11); cwd.ToolTip = s?.Cwd;
+        // Only part of a long one is in view, so say how much there is.
+        var count = p.Command.Split('\n').Length;
+        if (count > 8) { var more = MonoText($"{count} lines. Scroll to see all of it.", Need, 11); more.Margin = new Thickness(0, 4, 0, 0); body.Children.Add(more); }
         if (p.Tool is not ("Edit" or "Write" or "Read")) body.Children.Add(cwd);
 
         var deny = TextButton("Deny", () => Do(() => h.Hub.Deny(p)), "Ctrl Alt N");
@@ -268,7 +271,7 @@ sealed class ApprovalView : View
 
     static void Fill(TextBlock t, PendingRequest p)
     {
-        var lines = p.Command.Split('\n');
+        var lines = p.Command.Replace("\r\n", "\n").Split('\n');
         const int max = 400;
         var diff = p.Tool is "Edit" or "Write";
         for (var i = 0; i < Math.Min(lines.Length, max); i++)
