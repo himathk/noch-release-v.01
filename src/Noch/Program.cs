@@ -105,10 +105,13 @@ static class Program
             if (Environment.GetEnvironmentVariable("NOCH_DEMO") is { Length: > 0 })
             {
                 var step = 0;
-                var demo = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3.5) };
+                var snap = Environment.GetEnvironmentVariable("NOCH_DEMO") == "snap";
+                var demo = new DispatcherTimer { Interval = TimeSpan.FromSeconds(snap ? 2 : 3.5) };
                 demo.Tick += (_, _) =>
                 {
                     double w = SystemParameters.WorkArea.Width, h = SystemParameters.WorkArea.Height;
+                    // Hard, fast pulls off the same spot, to shake out drawing that lags behind.
+                    if (snap) { _window.DemoDrag((0, w / 4, 18), (.16, w / 4, 420 + step++ % 3 * 60), (.5, w / 4, 480), (.9, w / 4, 20)); return; }
                     switch (step++)
                     {
                         case 0: _window.DemoDrag((0, w / 2, 18), (.5, w / 2, 260), (1.1, w - 300, 500), (1.4, w - 60, 520)); break;

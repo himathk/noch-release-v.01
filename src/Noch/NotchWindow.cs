@@ -248,10 +248,9 @@ sealed class NotchWindow : Window, IHost
 
     // ---- dragging ----
 
-    DragWindow? _drag;
+    DragScene? _drag;
     Native.POINT? _press;
     DateTime _dragStart, _lastDrag;
-    int _dragFrames;
 
 #if DEBUG
     /// Stands in for the mouse in debug demos.
@@ -328,10 +327,19 @@ sealed class NotchWindow : Window, IHost
         _peek = _player = false; _pinnedUntil = default;
         var p = Pointer();
         var bubble = new Bubble(_shell.Dock, _shell.Body(), _shell.Area, p.X, p.Y) { Motion = Motion };
-        _drag = new DragWindow(bubble, _area, Scale, BubbleDots, Media.Current?.Tint ?? Theme.MediaColor);
-        _drag.Show();
-        _dragFrames = 0; _dragStart = _lastDrag = DateTime.UtcNow;
+        _drag = new DragScene(bubble, _area, Scale, BubbleDots, Media.Current?.Tint ?? Theme.MediaColor);
+        _dragStart = _lastDrag = DateTime.UtcNow;
+        // The bar itself melts into the edge it hangs from.
+        foreach (var v in _shell.Children.OfType<View>())
+        {
+            v.IsHitTestVisible = false;
+            v.BeginAnimation(OpacityProperty, new DoubleAnimation(0, TimeSpan.FromMilliseconds(60)));
+        }
+        _growing = _bounce = false;
+        (_shell.W.Target, _shell.H.Target) = Vertical ? (0.0, Bubble.Melted) : (Bubble.Melted, 0.0);
         CompositionTarget.Rendering -= Frame;
+        _lastFrame = DateTime.UtcNow;
+        CompositionTarget.Rendering += Frame;
         CompositionTarget.Rendering += DragFrame;
     }
 
@@ -341,12 +349,10 @@ sealed class NotchWindow : Window, IHost
         var dt = Math.Min((now - _lastDrag).TotalSeconds, .05);
         if (dt <= 0 || _drag is null) return;
         _lastDrag = now;
-        // The bubble is drawn over the bar before the bar is hidden, so nothing flickers.
-        if (++_dragFrames == 3) _shell.Opacity = 0;
         var p = Pointer();
         if (!p.Down) _drag.Bubble.Release();
         _drag.Bubble.Step(dt, p.X, p.Y);
-        _drag.Follow((now - _dragStart).TotalSeconds);
+        _drag.Draw((now - _dragStart).TotalSeconds);
         if (_drag.Bubble.Landed) EndDrag(_drag.Bubble.Target!.Value);
     }
 
@@ -357,15 +363,12 @@ sealed class NotchWindow : Window, IHost
 #if DEBUG
         PointerScript = null;
 #endif
-        var ghost = _drag!;
+        var done = _drag!;
         _drag = null;
         _settings.Dock = dock.ToString();
         _settings.Save();
         MoveTo(dock);
-        // Hide the bubble only once the bar underneath has been drawn.
-        var left = 4;
-        void Away(object? s, EventArgs e) { if (--left > 0) return; CompositionTarget.Rendering -= Away; ghost.Close(); }
-        CompositionTarget.Rendering += Away;
+        done.Close();
     }
 
     /// Springs back open from bubble size at a new place.
@@ -376,7 +379,6 @@ sealed class NotchWindow : Window, IHost
         _shell.Dock = dock;
         _shell.W.Snap(dock.Vertical ? 36 : 56); _shell.H.Snap(dock.Vertical ? 56 : 36); _shell.R.Snap(16); _shell.Ear.Snap(8);
         Place();
-        _shell.Opacity = 1;
         _bounce = true;
         _lastProbe = default;
         Sync();
@@ -407,7 +409,7 @@ sealed class NotchWindow : Window, IHost
             var x = _shell.Dock.Side switch { Side.Left => 12, Side.Right => _area.Width - 12, _ => b.CenterX };
             var y = _shell.Dock.Side switch { Side.Top => 12, Side.Bottom => _area.Height - 12, _ => b.CenterY };
             var (covered, full) = Native.Probe(_hwnd, (int)((_area.Left + x) * Scale), (int)((_area.Top + y) * Scale));
-            if (covered != _covered || full != _fullscreen) { _covered = covered; _fullscreen = full; Sync(); Native.KeepOnTop(_hwnd); }
+            if (_drag is null && (covered != _covered || full != _fullscreen)) { _covered = covered; _fullscreen = full; Sync(); Native.KeepOnTop(_hwnd); }
         }
         if (now - _lastSweep > TimeSpan.FromSeconds(1))
         {

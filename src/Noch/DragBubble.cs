@@ -12,10 +12,8 @@ namespace Noch;
 sealed class Bubble
 {
     const double Radius = 30, Break = 108, Grab = 74;
-    public readonly Spring X = new(0), Y = new(0), R = new(16), Wobble = new(0), Base = new(0), BodyW = new(0), BodyH = new(0), Recoil = new(0);
+    public readonly Spring X = new(0), Y = new(0), R = new(16), Wobble = new(0), Base = new(0), Recoil = new(0);
     readonly Size _area;
-    readonly Noch.Core.Dock _from;
-    readonly double _bodyAt;
     Side _recoilSide;
     double _recoilAt, _angle, _landing;
     double _offX, _offY;
@@ -24,19 +22,18 @@ sealed class Bubble
     public Noch.Core.Dock? Target { get; private set; }
     public bool Landed { get; private set; }
     public bool Motion { get; init; } = true;
+    /// How long the bar is while it melts into the edge.
+    public const double Melted = Radius * 2.4;
 
     public Bubble(Noch.Core.Dock from, Box body, Size area, double px, double py)
     {
-        _from = from; _area = area; Attached = from.Side;
-        _bodyAt = from.Vertical ? body.CenterY : body.CenterX;
-        BodyW.Snap(from.Vertical ? body.H : body.W); BodyH.Snap(from.Vertical ? body.W : body.H);
-        BodyW.Target = Radius * 2.4; BodyH.Target = 0;
+        _area = area; Attached = from.Side;
         // It swells out of the bar under the pointer.
-        double half = BodyW.Value / 2 - 12, u = Math.Clamp(from.Vertical ? py : px, _bodyAt - half, _bodyAt + half), v = Math.Min(BodyH.Value / 2, 18);
+        double at = from.Vertical ? body.CenterY : body.CenterX, length = from.Vertical ? body.H : body.W, depth = from.Vertical ? body.W : body.H;
+        double half = Math.Max(0, length / 2 - 12), u = Math.Clamp(from.Vertical ? py : px, at - half, at + half), v = Math.Min(depth / 2, 18);
         var c = ToArea(from.Side, u, v);
         X.Snap(c.X); Y.Snap(c.Y); Base.Snap(u);
         R.Target = Radius;
-        _offX = _offY = 0;
     }
 
     /// (along the edge, away from the edge) to screen units, and back.
@@ -101,7 +98,7 @@ sealed class Bubble
             if (Motion) Wobble.Velocity -= 3;
         }
         Base.Step(dt, Target != null ? .05 : .2, .9);
-        R.Step(dt, .34, .55); BodyW.Step(dt, .26, 1); BodyH.Step(dt, .22, 1); Recoil.Step(dt, .26, .38);
+        R.Step(dt, .34, .55); Recoil.Step(dt, .26, .38);
         Wobble.Step(dt, .27, .2);
 
         var speed = Math.Sqrt(X.Velocity * X.Velocity + Y.Velocity * Y.Velocity);
@@ -110,18 +107,25 @@ sealed class Bubble
         if (Target != null && (_landing > .7 || Math.Abs(X.Value - tx) < 3 && Math.Abs(Y.Value - ty) < 3 && speed < 90)) Landed = true;
     }
 
-    /// Draws with (ox, oy) as the top left of the picture, in screen units.
-    public void Draw(DrawingContext dc, double ox, double oy)
+    /// Everything that belongs to one edge: the neck, the recoil after a snap, the reach towards a nearby bubble.
+    /// (ox, oy) is the top left of the picture, in screen units.
+    public void DrawEdge(DrawingContext dc, Side side, double ox, double oy)
     {
         (_offX, _offY) = (ox, oy);
         var parts = new List<Geometry>();
-        if (BodyH.Value > .5) parts.Add(BodyShape());
-        if (Math.Abs(Recoil.Value) > .6) parts.Add(Mound(_recoilSide, _recoilAt, Math.Max(0, Recoil.Value), 46));
-        if (Attached is { } a) parts.Add(Neck(a)); else if (Reach() is { } m) parts.Add(m);
-        parts.Add(Ball());
+        if (_recoilSide == side && Recoil.Value > .6) parts.Add(Mound(side, _recoilAt, Recoil.Value, 46));
+        if (Attached == side) { parts.Add(Neck(side)); parts.Add(Ball()); }
+        else if (Attached is null && Reach(side) is { } m) parts.Add(m);
         // Outlines first, then fills, so overlapping pieces read as one drop.
         foreach (var g in parts) dc.DrawGeometry(null, Shell.Edge, g);
         foreach (var g in parts) dc.DrawGeometry(Theme.Surface, null, g);
+    }
+
+    public void DrawBall(DrawingContext dc, double ox, double oy)
+    {
+        (_offX, _offY) = (ox, oy);
+        // While it is attached the edge picture has the outline, which must not cut across the neck.
+        dc.DrawGeometry(Theme.Surface, Attached is null ? Shell.Edge : null, Ball());
     }
 
     Point L(Side s, double u, double v) { var p = ToArea(s, u, v); return new(p.X - _offX, p.Y - _offY); }
@@ -166,9 +170,9 @@ sealed class Bubble
     }
 
     /// An edge that is close enough reaches out for the bubble.
-    Geometry? Reach()
+    Geometry? Reach(Side s)
     {
-        var s = Noch.Core.Dock.NearestSide(X.Value, Y.Value, _area.Width, _area.Height);
+        if (s != Noch.Core.Dock.NearestSide(X.Value, Y.Value, _area.Width, _area.Height)) return null;
         var d = Depth(s, X.Value, Y.Value);
         var t = Math.Clamp(1 - (d - Grab) / 80, 0, 1);
         return t <= 0 || !Motion ? null : Mound(s, Along(s, X.Value, Y.Value), t * t * 24, 34 + 20 * t);
@@ -188,70 +192,79 @@ sealed class Bubble
         g.Freeze();
         return g;
     }
-
-    /// The bar it came from, melting into the edge.
-    Geometry BodyShape()
-    {
-        double w = Math.Max(1, BodyW.Value), h = BodyH.Value, ear = Math.Min(10, h), r = Math.Max(0, Math.Min(18, Math.Min(h - ear, w / 2)));
-        // In a corner the bar keeps its back to the side wall while it melts towards the pull.
-        var at = _bodyAt + (Base.Value - _bodyAt) * Math.Clamp(1 - h / 40, 0, 1);
-        double u0 = at - w / 2, u1 = at + w / 2; var s = _from.Side;
-        if (_from.AtStart) { u1 = Math.Max(u0 + w, w); u0 = -4; }
-        if (_from.AtEnd) { u0 = Math.Min(u0, _area.Width - w); u1 = _area.Width + 4; }
-        var g = new StreamGeometry();
-        using (var c = g.Open())
-        {
-            c.BeginFigure(L(s, u0 - ear, -3), true, true);
-            c.LineTo(L(s, u0 - ear, 0), true, false);
-            c.QuadraticBezierTo(L(s, u0, 0), L(s, u0, ear), true, true);
-            c.LineTo(L(s, u0, h - r), true, false);
-            c.QuadraticBezierTo(L(s, u0, h), L(s, u0 + r, h), true, true);
-            c.LineTo(L(s, u1 - r, h), true, false);
-            c.QuadraticBezierTo(L(s, u1, h), L(s, u1, h - r), true, true);
-            c.LineTo(L(s, u1, ear), true, false);
-            c.QuadraticBezierTo(L(s, u1, 0), L(s, u1 + ear, 0), true, true);
-            c.LineTo(L(s, u1 + ear, -3), true, false);
-        }
-        g.Freeze();
-        return g;
-    }
 }
 
-/// A small click-through window that follows the bubble around.
-sealed class DragWindow : Window
+/// Click-through, never takes focus.
+abstract class GhostWindow : Window
 {
-    const double Size = 600;
-    readonly Canvas _canvas;
-    readonly DotMatrix _dots = new(Dots.Idle, 1.35);
-    readonly Rect _area;
-    readonly double _scale;
-    IntPtr _hwnd;
-    double _ox, _oy;
-    public Bubble Bubble { get; }
-
-    sealed class Painter(DragWindow w) : Canvas
+    protected IntPtr Hwnd { get; private set; }
+    protected GhostWindow(string title)
     {
-        protected override void OnRender(DrawingContext dc) => w.Bubble.Draw(dc, w._ox, w._oy);
-    }
-
-    public DragWindow(Bubble bubble, Rect area, double scale, Dots dots, Color tint)
-    {
-        Bubble = bubble; _area = area; _scale = scale;
+        Title = title;
         WindowStyle = WindowStyle.None; AllowsTransparency = true; Background = null; ResizeMode = ResizeMode.NoResize;
-        ShowInTaskbar = false; ShowActivated = false; Topmost = true; Width = Height = Size; IsHitTestVisible = false; Title = "Noch drag";
-        _dots.Kind = dots; _dots.Tint = tint; _dots.Opacity = 0;
-        _canvas = new Painter(this);
-        _canvas.Children.Add(_dots);
-        Content = _canvas;
-        Left = area.Left + bubble.X.Value - Size / 2; Top = area.Top + bubble.Y.Value - Size / 2;
+        ShowInTaskbar = false; ShowActivated = false; Topmost = true; IsHitTestVisible = false;
     }
 
     protected override void OnSourceInitialized(EventArgs e)
     {
         base.OnSourceInitialized(e);
-        _hwnd = new WindowInteropHelper(this).Handle;
-        Native.SetExStyle(_hwnd, Native.WS_EX_NOACTIVATE | Native.WS_EX_TOOLWINDOW | Native.WS_EX_TRANSPARENT, true);
-        Follow(0);
+        Hwnd = new WindowInteropHelper(this).Handle;
+        Native.SetExStyle(Hwnd, Native.WS_EX_NOACTIVATE | Native.WS_EX_TOOLWINDOW | Native.WS_EX_TRANSPARENT, true);
+    }
+}
+
+/// Lies along a whole edge and stays put, so what is stuck to the edge can never be carried off it.
+sealed class EdgeWindow : GhostWindow
+{
+    const double Deep = 200;
+    readonly Painter _painter;
+    readonly Side _side;
+    double _ox, _oy;
+    Bubble? _bubble;
+
+    sealed class Painter(EdgeWindow w) : FrameworkElement
+    {
+        protected override void OnRender(DrawingContext dc) => w._bubble?.DrawEdge(dc, w._side, w._ox, w._oy);
+    }
+
+    public EdgeWindow(Side side) : base("Noch edge") { _side = side; Content = _painter = new Painter(this); }
+
+    public void Cover(Rect area)
+    {
+        var tall = _side is Side.Left or Side.Right;
+        Width = tall ? Deep : area.Width; Height = tall ? area.Height : Deep;
+        _ox = _side == Side.Right ? area.Width - Deep : 0; _oy = _side == Side.Bottom ? area.Height - Deep : 0;
+        Left = area.Left + _ox; Top = area.Top + _oy;
+    }
+
+    public void Draw(Bubble? b) { _bubble = b; _painter.InvalidateVisual(); }
+}
+
+/// The round part only. This one follows the pointer.
+sealed class BallWindow : GhostWindow
+{
+    const double Span = 160;
+    readonly DotMatrix _dots = new(Dots.Idle, 1.35);
+    readonly Painter _painter;
+    readonly Bubble _bubble;
+    readonly Rect _area;
+    readonly double _scale;
+    double _ox, _oy;
+
+    sealed class Painter(BallWindow w) : Canvas
+    {
+        protected override void OnRender(DrawingContext dc) => w._bubble.DrawBall(dc, w._ox, w._oy);
+    }
+
+    public BallWindow(Bubble bubble, Rect area, double scale, Dots dots, Color tint) : base("Noch drag")
+    {
+        _bubble = bubble; _area = area; _scale = scale;
+        Width = Height = Span;
+        _dots.Kind = dots; _dots.Tint = tint; _dots.Opacity = 0;
+        _painter = new Painter(this);
+        _painter.Children.Add(_dots);
+        Content = _painter;
+        Left = area.Left + bubble.X.Value - Span / 2; Top = area.Top + bubble.Y.Value - Span / 2;
     }
 
     public Dots Kind { set => _dots.Kind = value; }
@@ -259,11 +272,54 @@ sealed class DragWindow : Window
     public void Follow(double age)
     {
         // Whole pixels for the window; the fraction is drawn inside it.
-        var px = Math.Round((_area.Left + Bubble.X.Value - Size / 2) * _scale); var py = Math.Round((_area.Top + Bubble.Y.Value - Size / 2) * _scale);
-        Native.Move(_hwnd, (int)px, (int)py);
+        var px = Math.Round((_area.Left + _bubble.X.Value - Span / 2) * _scale); var py = Math.Round((_area.Top + _bubble.Y.Value - Span / 2) * _scale);
+        Native.Move(Hwnd, (int)px, (int)py);
         _ox = px / _scale - _area.Left; _oy = py / _scale - _area.Top;
-        _dots.Opacity = Math.Clamp((age - .08) / .14, 0, 1) * Math.Clamp((Bubble.R.Value - 19) / 6, 0, 1);
-        Canvas.SetLeft(_dots, Bubble.X.Value - _ox - _dots.Width / 2); Canvas.SetTop(_dots, Bubble.Y.Value - _oy - _dots.Height / 2);
-        _canvas.InvalidateVisual();
+        _dots.Opacity = Math.Clamp((age - .08) / .14, 0, 1) * Math.Clamp((_bubble.R.Value - 19) / 6, 0, 1);
+        Canvas.SetLeft(_dots, _bubble.X.Value - _ox - _dots.Width / 2); Canvas.SetTop(_dots, _bubble.Y.Value - _oy - _dots.Height / 2);
+        _painter.InvalidateVisual();
+    }
+}
+
+/// All the windows of one drag. The four edge windows are kept between drags.
+sealed class DragScene
+{
+    static EdgeWindow[]? _edges;
+    static int _shown;
+    readonly BallWindow _ball;
+    public Bubble Bubble { get; }
+    public Dots Kind { set => _ball.Kind = value; }
+
+    public DragScene(Bubble bubble, Rect area, double scale, Dots dots, Color tint)
+    {
+        Bubble = bubble;
+        _edges ??= [new(Side.Top), new(Side.Bottom), new(Side.Left), new(Side.Right)];
+        _shown++;
+        foreach (var e in _edges) { e.Cover(area); e.Draw(bubble); e.Show(); }
+        _ball = new BallWindow(bubble, area, scale, dots, tint);
+        _ball.Show();
+        _ball.Follow(0);
+    }
+
+    public void Draw(double age)
+    {
+        foreach (var e in _edges!) e.Draw(Bubble);
+        _ball.Follow(age);
+    }
+
+    /// Takes everything away, once the bar underneath has had time to be drawn.
+    public void Close()
+    {
+        int frames = 0, mine = _shown;
+        void Away(object? s, EventArgs e)
+        {
+            frames++;
+            if (frames == 4) { _ball.Close(); if (mine == _shown) foreach (var w in _edges!) w.Draw(null); }
+            if (frames < 8) return;
+            CompositionTarget.Rendering -= Away;
+            // Hidden only after the empty picture is up, so an old one cannot flash next time.
+            if (mine == _shown) foreach (var w in _edges!) w.Hide();
+        }
+        CompositionTarget.Rendering += Away;
     }
 }

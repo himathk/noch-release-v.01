@@ -103,7 +103,8 @@ static class Shots
                 double x = cell % cols * (area.Width + 24), y = cell / cols * (area.Height + 24); cell++;
                 dc.PushClip(new RectangleGeometry(new Rect(x, y, area.Width, area.Height)));
                 dc.DrawRectangle(new LinearGradientBrush(Color.FromRgb(0x79, 0xA9, 0xCF), Color.FromRgb(0xC2, 0xDB, 0xE6), 90), null, new Rect(x, y, area.Width, area.Height));
-                bubble.Draw(dc, -x, -y);
+                foreach (var side in Enum.GetValues<Side>()) bubble.DrawEdge(dc, side, -x, -y);
+                bubble.DrawBall(dc, -x, -y);
                 dc.DrawText(new FormattedText($"{stop * 1000:0} ms{(bubble.Landed ? " landed" : "")}", System.Globalization.CultureInfo.InvariantCulture, FlowDirection.LeftToRight, new Typeface("Segoe UI"), 26, Brushes.Black, 1), new Point(x + 16, y + area.Height - 46));
                 dc.Pop();
             }
