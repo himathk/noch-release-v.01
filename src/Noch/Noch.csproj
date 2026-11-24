@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>$(NochTfm)-windows10.0.19041.0</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.17763.0</SupportedOSPlatformVersion>
+    <OutputType>WinExe</OutputType>
+    <AssemblyName>Noch</AssemblyName>
+    <RootNamespace>Noch</RootNamespace>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <StartupObject>Noch.Program</StartupObject>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon Condition="Exists('noch.ico')">noch.ico</ApplicationIcon>
+    <Product>Noch</Product>
+    <Description>A notch for your AI agents and your music</Description>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <!-- The release workflow fills this in so the app knows where to look for updates. -->
+    <NochRepo></NochRepo>
+  </PropertyGroup>
+  <ItemGroup>
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
+    <Resource Include="Fonts\*.ttf" />
+    <Resource Include="noch.ico" Condition="Exists('noch.ico')" />
+    <AssemblyMetadata Include="NochRepo" Value="$(NochRepo)" />
+    <PackageReference Include="Velopack" Version="1.2.161" />
+    <ProjectReference Include="..\Noch.Core\Noch.Core.csproj" />
+    <ProjectReference Include="..\Noch.Hook\Noch.Hook.csproj" ReferenceOutputAssembly="false" SkipGetTargetFrameworkProperties="true" GlobalPropertiesToRemove="RuntimeIdentifier;SelfContained" OutputItemType="Content" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

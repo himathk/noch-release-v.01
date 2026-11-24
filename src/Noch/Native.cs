@@ -1,0 +1,127 @@
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.Text;
+
+namespace Noch;
+
+static class Native
+{
+    public const int GWL_STYLE = -16, GWL_EXSTYLE = -20;
+    public const int WS_CAPTION = 0x00C00000;
+    public const int WS_EX_TRANSPARENT = 0x20, WS_EX_TOOLWINDOW = 0x80, WS_EX_NOACTIVATE = 0x08000000;
+    public const int WM_MOUSEACTIVATE = 0x21, WM_HOTKEY = 0x312, MA_NOACTIVATE = 3;
+    public const uint MOD_ALT = 1, MOD_CONTROL = 2, MOD_NOREPEAT = 0x4000;
+
+    [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X, Y; }
+    [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
+    [StructLayout(LayoutKind.Sequential)] struct MONITORINFO { public int cbSize; public RECT rcMonitor, rcWork; public int dwFlags; }
+
+    [DllImport("user32")] public static extern int GetWindowLong(IntPtr h, int i);
+    [DllImport("user32")] public static extern int SetWindowLong(IntPtr h, int i, int v);
+    [DllImport("user32")] static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int w, int hh, uint flags);
+    [DllImport("user32")] public static extern bool RegisterHotKey(IntPtr h, int id, uint mods, uint vk);
+    [DllImport("user32")] public static extern bool UnregisterHotKey(IntPtr h, int id);
+    [DllImport("user32")] public static extern bool GetCursorPos(out POINT p);
+    [DllImport("user32")] public static extern short GetAsyncKeyState(int vk);
+    [DllImport("user32")] static extern bool EnumWindows(EnumProc cb, IntPtr l);
+    [DllImport("user32")] static extern bool IsWindowVisible(IntPtr h);
+    [DllImport("user32")] static extern bool IsIconic(IntPtr h);
+    [DllImport("user32")] static extern bool IsZoomed(IntPtr h);
+    [DllImport("user32")] static extern bool GetWindowRect(IntPtr h, out RECT r);
+    [DllImport("user32", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr h, StringBuilder s, int n);
+    [DllImport("user32", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
+    [DllImport("user32")] static extern bool SetForegroundWindow(IntPtr h);
+    [DllImport("user32")] static extern bool ShowWindow(IntPtr h, int cmd);
+    [DllImport("user32")] static extern IntPtr MonitorFromPoint(POINT p, uint flags);
+    [DllImport("user32")] static extern bool GetMonitorInfo(IntPtr m, ref MONITORINFO i);
+    [DllImport("dwmapi")] static extern int DwmGetWindowAttribute(IntPtr h, int attr, out int v, int size);
+    [DllImport("kernel32", SetLastError = true)] static extern IntPtr OpenProcess(uint access, bool inherit, int pid);
+    [DllImport("kernel32")] static extern bool GetExitCodeProcess(IntPtr h, out uint code);
+    [DllImport("kernel32")] static extern bool CloseHandle(IntPtr h);
+    delegate bool EnumProc(IntPtr h, IntPtr l);
+
+    public static void KeepOnTop(IntPtr h) => SetWindowPos(h, new IntPtr(-1), 0, 0, 0, 0, 0x1 | 0x2 | 0x10);
+
+    public static void SetExStyle(IntPtr h, int flag, bool on)
+    {
+        var s = GetWindowLong(h, GWL_EXSTYLE);
+        var n = on ? s | flag : s & ~flag;
+        if (n != s) SetWindowLong(h, GWL_EXSTYLE, n);
+    }
+
+    public static bool ProcessAlive(int pid)
+    {
+        var h = OpenProcess(0x1000, false, pid);
+        if (h == IntPtr.Zero) return Marshal.GetLastWin32Error() == 5;
+        try { return !GetExitCodeProcess(h, out var code) || code == 259; } finally { CloseHandle(h); }
+    }
+
+    public static RECT PrimaryMonitor()
+    {
+        var i = new MONITORINFO { cbSize = Marshal.SizeOf<MONITORINFO>() };
+        GetMonitorInfo(MonitorFromPoint(default, 1), ref i);
+        return i.rcMonitor;
+    }
+
+    /// What lies under the notch: nothing, a normal window, or something fullscreen.
+    public static (bool Covered, bool Fullscreen) ProbeTop(IntPtr self)
+    {
+        var m = PrimaryMonitor();
+        int cx = (m.Left + m.Right) / 2, cy = m.Top + 12;
+        var result = (false, false);
+        var cls = new StringBuilder(64);
+        EnumWindows((h, _) =>
+        {
+            if (h == self || !IsWindowVisible(h) || IsIconic(h)) return true;
+            var ex = GetWindowLong(h, GWL_EXSTYLE);
+            if ((ex & (WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE)) != 0) return true;
+            if (DwmGetWindowAttribute(h, 14, out var cloaked, 4) == 0 && cloaked != 0) return true;
+            if (!GetWindowRect(h, out var r) || cx < r.Left || cx >= r.Right || cy < r.Top || cy >= r.Bottom) return true;
+            cls.Clear(); GetClassName(h, cls, 64);
+            if (cls.ToString() is "Progman" or "WorkerW") return false;
+            var fills = r.Left <= m.Left && r.Top <= m.Top && r.Right >= m.Right && r.Bottom >= m.Bottom;
+            var captioned = IsZoomed(h) && (GetWindowLong(h, GWL_STYLE) & WS_CAPTION) == WS_CAPTION;
+            result = (true, fills && !captioned);
+            return false;
+        }, IntPtr.Zero);
+        return result;
+    }
+
+    public static bool AnyWindowTitle(Func<string, bool> match)
+    {
+        var found = false;
+        var sb = new StringBuilder(512);
+        EnumWindows((h, _) =>
+        {
+            if (!IsWindowVisible(h)) return true;
+            sb.Clear(); GetWindowText(h, sb, 512);
+            return !(found = match(sb.ToString()));
+        }, IntPtr.Zero);
+        return found;
+    }
+
+    /// Brings forward the first window owned by one of these processes.
+    public static bool Focus(IReadOnlyList<int> pids)
+    {
+        foreach (var pid in pids)
+        {
+            try
+            {
+                using var p = Process.GetProcessById(pid);
+                if (p.ProcessName is "explorer" || p.MainWindowHandle == IntPtr.Zero) continue;
+                return Focus(p.MainWindowHandle);
+            }
+            catch { }
+        }
+        // Windows Terminal is often not an ancestor of the shells it shows.
+        foreach (var p in Process.GetProcessesByName("WindowsTerminal"))
+            using (p) if (p.MainWindowHandle != IntPtr.Zero) return Focus(p.MainWindowHandle);
+        return false;
+    }
+
+    static bool Focus(IntPtr h)
+    {
+        if (IsIconic(h)) ShowWindow(h, 9);
+        return SetForegroundWindow(h);
+    }
+}

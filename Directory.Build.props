@@ -1,0 +1,11 @@
+<Project>
+  <PropertyGroup>
+    <Version>0.1.0</Version>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <!-- Builds on whichever SDK is installed. Releases are built with .NET 10. -->
+    <NochTfm>net8.0</NochTfm>
+    <NochTfm Condition="$([MSBuild]::VersionGreaterThanOrEquals('$(MSBuildVersion)', '18.0'))">net10.0</NochTfm>
+  </PropertyGroup>
+</Project>
