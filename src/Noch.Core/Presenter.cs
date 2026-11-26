@@ -1,6 +1,6 @@
 namespace Noch.Core;
 
-public enum NotchState { Hidden, Rest, Strip, Compact, Approval, Question, Done, Failed, Notice, Peek, Player, Focus, Shelf }
+public enum NotchState { Hidden, Rest, Strip, Compact, Approval, Question, Done, Failed, Notice, Peek, Player, Focus, Shelf, Voice }
 
 /// What the user has opened by hand.
 public enum Panel { None, Peek, Player, Focus, Shelf }
@@ -8,7 +8,7 @@ public enum Panel { None, Peek, Player, Focus, Shelf }
 /// What the bar is carrying.
 [Flags] public enum Show { None = 0, Agent = 1, Music = 2, Timer = 4, Meeting = 8 }
 
-public sealed record Scene(bool Fullscreen, bool Covered, Panel Panel, bool Music = false, bool Timer = false, bool Meeting = false, Notice? Notice = null, bool Quiet = false)
+public sealed record Scene(bool Fullscreen, bool Covered, Panel Panel, bool Music = false, bool Timer = false, bool Meeting = false, Notice? Notice = null, bool Quiet = false, bool Voice = false)
 {
     public Show Bar(bool agents) => (agents ? Show.Agent : 0) | (Music ? Show.Music : 0) | (Timer ? Show.Timer : 0) | (Meeting ? Show.Meeting : 0);
 }
@@ -19,6 +19,8 @@ public static class Presenter
     public static NotchState Choose(AgentHub hub, Scene s)
     {
         var pending = hub.Pending;
+        // Asked for by holding the keys, so it comes before everything, even over a full-screen window.
+        if (s.Voice) return NotchState.Voice;
         if (s.Fullscreen) return pending.Count > 0 ? NotchState.Strip : NotchState.Hidden;
         switch (s.Panel)
         {

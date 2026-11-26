@@ -17,6 +17,8 @@
     <NochRepo></NochRepo>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="Whisper.net" Version="1.9.1" />
+    <PackageReference Include="Whisper.net.Runtime" Version="1.9.1" />
     <Using Remove="System.Windows.Forms" />
     <Using Remove="System.Drawing" />
     <Resource Include="Fonts\*.ttf" />

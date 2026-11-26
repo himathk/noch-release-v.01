@@ -63,3 +63,43 @@ public class ScreenTests
         Assert.True(Screens.Hard(Monitor, Side.Bottom, Both));
     }
 }
+
+public class HoldKeysTests
+{
+    static readonly DateTime T0 = new(2026, 1, 1);
+
+    [Fact]
+    public void Held_alone_for_a_moment_starts_and_letting_go_finishes()
+    {
+        var k = new HoldKeys();
+        Assert.Equal(KeyAction.None, k.Step(true, true, false, false, T0));
+        Assert.Equal(KeyAction.None, k.Step(true, true, false, false, T0.AddMilliseconds(200)));
+        Assert.Equal(KeyAction.Start, k.Step(true, true, false, false, T0.AddMilliseconds(400)));
+        Assert.Equal(KeyAction.None, k.Step(true, true, false, true, T0.AddSeconds(3)));
+        Assert.Equal(KeyAction.Finish, k.Step(true, false, false, true, T0.AddSeconds(4)));
+    }
+
+    [Fact]
+    public void A_shortcut_like_ctrl_alt_y_never_starts_it()
+    {
+        var k = new HoldKeys();
+        k.Step(true, true, false, false, T0);
+        Assert.Equal(KeyAction.None, k.Step(true, true, true, false, T0.AddMilliseconds(100)));
+        // Still holding Ctrl Alt after letting go of Y: nothing until both are let go.
+        Assert.Equal(KeyAction.None, k.Step(true, true, false, false, T0.AddSeconds(2)));
+        k.Step(false, false, false, false, T0.AddSeconds(3));
+        k.Step(true, true, false, false, T0.AddSeconds(4));
+        Assert.Equal(KeyAction.Start, k.Step(true, true, false, false, T0.AddSeconds(5)));
+    }
+
+    [Fact]
+    public void Another_key_while_listening_throws_it_away()
+    {
+        var k = new HoldKeys();
+        k.Step(true, true, false, false, T0);
+        k.Step(true, true, false, false, T0.AddSeconds(1));
+        Assert.Equal(KeyAction.Cancel, k.Step(true, true, true, true, T0.AddSeconds(2)));
+        Assert.Equal(KeyAction.None, k.Step(true, true, false, false, T0.AddSeconds(3)));
+        Assert.Equal(KeyAction.None, k.Step(false, true, false, false, T0.AddSeconds(4)));
+    }
+}

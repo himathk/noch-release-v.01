@@ -37,6 +37,7 @@ sealed class NotchWindow : Window, IHost
     public IReadOnlyList<SetupItem> Setup => SetupItems();
     public bool Armed => DateTime.UtcNow >= _armAt;
     public bool Vertical => _shell.Dock.Vertical;
+    public Side Side => _shell.Dock.Side;
     public NotchState State { get; private set; } = NotchState.Rest;
 
     public NotchWindow(AppServices services)
@@ -58,6 +59,7 @@ sealed class NotchWindow : Window, IHost
         S.Notices.Changed += () => Dispatcher.BeginInvoke(Sync);
         S.Timer.Changed += () => Dispatcher.BeginInvoke(() => { _settings.Save(); Sync(); });
         S.Shelf.Changed += () => Dispatcher.BeginInvoke(Sync);
+        S.Voice.Changed += () => Dispatcher.BeginInvoke(Sync);
         S.Calendar.Changed += () => Dispatcher.BeginInvoke(Sync);
         S.Usage.Changed += () => Dispatcher.BeginInvoke(() => { if (_panel == Panel.Peek) Sync(); });
         _tick.Tick += (_, _) => OnTick();
@@ -180,7 +182,7 @@ sealed class NotchWindow : Window, IHost
         if (_hwnd == IntPtr.Zero || _quiet) return;
         if (_panel == Panel.Player && Media.Current is null) _panel = Panel.None;
         var notice = S.Notices.Current;
-        var scene = new Scene(_fullscreen, _covered && !_settings.AlwaysFull, _panel, MusicVisible, S.Timer.Active, S.Calendar.Soon(DateTime.UtcNow) != null, notice, S.Timer.Quiet);
+        var scene = new Scene(_fullscreen, _covered && !_settings.AlwaysFull, _panel, MusicVisible, S.Timer.Active, S.Calendar.Soon(DateTime.UtcNow) != null, notice, S.Timer.Quiet, S.Voice.Showing && _drag is null);
         State = Presenter.Choose(Hub, scene);
         var show = scene.Bar(Hub.Sessions.Any(Presenter.Active));
         if (_drag != null) { _drag.Kind = BubbleDots; return; }
@@ -190,6 +192,7 @@ sealed class NotchWindow : Window, IHost
             NotchState.Approval or NotchState.Question => State + ":" + pending?.GetHashCode(),
             NotchState.Done or NotchState.Failed => State + ":" + Hub.Toast?.At.Ticks,
             NotchState.Compact => State + ":" + (int)show,
+            NotchState.Voice => State + ":" + S.Voice.Now + S.Voice.Text,
             // A level moving up or down is the same message.
             NotchState.Notice => State + ":" + notice?.Id + (notice?.Kind == NoticeKind.Volume ? "" : notice?.At.Ticks),
             _ => State.ToString()
@@ -220,6 +223,7 @@ sealed class NotchWindow : Window, IHost
                 NotchState.Player => new PlayerView(this),
                 NotchState.Focus => new FocusView(this),
                 NotchState.Shelf => new ShelfView(this),
+                NotchState.Voice => new VoiceView(this),
                 _ => null
             };
             if (next is null) return; // it was answered while we were looking; the next change brings us back

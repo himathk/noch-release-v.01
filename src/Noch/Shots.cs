@@ -33,7 +33,7 @@ static class Shots
             var settings = new Settings();
             var notices = new Notices();
             var sounds = new Sounds(settings);
-            var services = new AppServices { Settings = settings, Hub = hub, Media = media, Notices = notices, Sounds = sounds, Usage = new Usage(), Timer = new FocusTimer(settings.Focus), Shelf = new Shelf(), Stats = new Stats(), Calendar = new CalendarService(settings, notices, sounds), Notifications = new NotificationService(settings, notices) };
+            var services = new AppServices { Settings = settings, Hub = hub, Media = media, Notices = notices, Sounds = sounds, Usage = new Usage(), Timer = new FocusTimer(settings.Focus), Shelf = new Shelf(), Stats = new Stats(), Calendar = new CalendarService(settings, notices, sounds), Notifications = new NotificationService(settings, notices), Voice = new VoiceService(new Settings { Voice = false }) };
             var w = new NotchWindow(services) { Left = -4000, Top = -4000, WindowStartupLocation = WindowStartupLocation.Manual };
             w.Show();
             w.Left = -4000;
@@ -170,7 +170,7 @@ static class Shots
         public string? Repo => "https://github.com/himathk/noch-release-v.01";
     }
 
-    static void Save(NotchWindow w, string path)
+    internal static void Save(NotchWindow w, string path)
     {
         const double k = 2, pad = 20;
         // Pad every side except the ones the notch is attached to.

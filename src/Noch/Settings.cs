@@ -27,6 +27,8 @@ sealed class Settings
     public bool PowerAlerts { get; set; } = true;
     public bool WheelVolume { get; set; } = true;
     public bool Shortcut { get; set; } = true;
+    /// Hold Ctrl and Alt to talk to it.
+    public bool Voice { get; set; } = true;
 
     /// Kept outside the install folder, which is replaced on every update.
     public static string Folder { get; } = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), Program.Name);

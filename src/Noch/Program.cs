@@ -103,7 +103,7 @@ static class Program
             {
                 Settings = _settings, Hub = _hub, Media = _media, Notices = notices, Sounds = sounds, Usage = new Usage(), Timer = new FocusTimer(_settings.Focus),
                 Shelf = new Shelf(Path.Combine(Settings.Folder, "shelf.json")), Stats = new Stats(Path.Combine(Settings.Folder, "stats.json")),
-                Calendar = new CalendarService(_settings, notices, sounds), Notifications = new NotificationService(_settings, notices), OpenSettings = OpenSettings
+                Calendar = new CalendarService(_settings, notices, sounds), Notifications = new NotificationService(_settings, notices), Voice = new VoiceService(_settings), OpenSettings = OpenSettings
             };
             _server = new HookServer(_hub, Name == "Noch" ? null : "noch-dev", _s.Usage);
             _server.Start();
@@ -124,6 +124,22 @@ static class Program
             {
                 var step = 0;
                 var mode = Environment.GetEnvironmentVariable("NOCH_DEMO");
+                if (mode == "voice" && Environment.GetEnvironmentVariable("NOCH_VOICE_FILE") is { } wav)
+                {
+                    var talk = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+                    talk.Tick += (_, _) => { talk.Stop(); _s.Voice.DemoTalk(wav); };
+                    talk.Start();
+                    // Pictures of the bar as it goes, drawn from the window itself rather than the screen.
+                    if (Environment.GetEnvironmentVariable("NOCH_VOICE_SHOTS") is { } dir)
+                    {
+                        var n = 0;
+                        var shoot = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(300) };
+                        shoot.Tick += (_, _) => { if (_s.Voice.Showing) Shots.Save(_window, Path.Combine(dir, $"voice-{n++:00}-{_s.Voice.Now}.png")); if (n > 60) shoot.Stop(); };
+                        shoot.Start();
+                    }
+                }
+                else
+                {
                 bool snap = mode == "snap", across = mode is "screens" or "shared";
                 var demo = new DispatcherTimer { Interval = TimeSpan.FromSeconds(snap ? 2 : 3.5) };
                 demo.Tick += (_, _) =>
@@ -156,6 +172,7 @@ static class Program
                     }
                 };
                 demo.Start();
+                }
             }
 #endif
             StartUpdates();

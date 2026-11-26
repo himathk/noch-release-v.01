@@ -22,6 +22,8 @@ interface IHost
     bool Armed { get; }
     /// On the left or right edge, where bars stand upright.
     bool Vertical { get; }
+    /// The edge it hangs from.
+    Side Side { get; }
     void OpenPeek();
     void OpenPlayer();
     void OpenPanel(Panel p);
