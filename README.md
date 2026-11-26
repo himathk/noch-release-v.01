@@ -31,6 +31,8 @@ Works on Windows 10 (1809 or later) and Windows 11, 64-bit. Noch checks for upda
 | <img src="docs/shelf.png" width="420" alt="Shelf with files"> | **Shelf.** Drag files, links or text onto the notch and drag them out again later. It remembers where they are and never moves or copies them. |
 | <img src="docs/meeting.png" width="420" alt="Meeting starting"> | **Meetings.** A countdown from ten minutes before, then a Join button. Needs your calendar's private iCal link. |
 | <img src="docs/notification.png" width="420" alt="Notification from another app"> | **Other apps' notifications.** Off until you turn it on. Click one to put it away, or mute that app. |
+| <img src="docs/ask.png" width="420" alt="An answer to a spoken question"> | **Ask out loud.** Hold `Ctrl Alt`, ask, let go. What you said is written down on your PC, then Claude Code answers with your own plan, searching the web when it needs to (or Codex, if that is what you have). The first time, it fetches a 142 MB speech file. |
+| <img src="docs/listen.png" width="420" alt="Listening in on a meeting"> | **Listen in.** `Ctrl Alt L` listens to a meeting, both the call and your microphone, writes it down as it goes, and answers the questions people ask. Press it again to stop. Nothing is kept. |
 
 Open it from anywhere with `Ctrl Alt .`, and find everything else in **Settings**, from the gear in the notch or the tray icon.
 
@@ -52,9 +54,11 @@ Each agent shows how large its conversation has grown. **Usage limits** (how muc
 
 Agents report through their own hooks. **Connect** adds entries to `~/.claude/settings.json` (or `~/.cursor/hooks.json`) that run a tiny helper, `noch-hook.exe`. A copy of the original file is kept next to it as `.before-noch`, and everything else in the file is left alone.
 
-The helper talks to Noch over a Windows pipe that only your own user account can open. Nothing leaves your PC except the update check against GitHub and, if you add one, fetching your calendar. The calendar link is stored encrypted. Notifications are shown and forgotten. If Noch is closed, the helper exits silently and your agent carries on as normal.
+The helper talks to Noch over a Windows pipe that only your own user account can open. Nothing leaves your PC except the update check against GitHub, the speech file the first time you talk to it, the questions it hands to Claude Code or Codex (which send them to Anthropic or OpenAI under your own account), and, if you add one, fetching your calendar. The calendar link is stored encrypted. Notifications are shown and forgotten. If Noch is closed, the helper exits silently and your agent carries on as normal.
 
-Conversation sizes come from the token counts in Claude's own log files; only the counts are used. The daily tally stays on this PC. Music comes from the media session Windows already keeps. The dots follow the speaker level only. Noch never records or listens to sound.
+Conversation sizes come from the token counts in Claude's own log files; only the counts are used. The daily tally stays on this PC. Music comes from the media session Windows already keeps. The dots follow the speaker level only.
+
+Noch only records sound while you hold `Ctrl Alt` or while listening in is on. It turns it into text on your PC with [Whisper](https://github.com/ggml-org/whisper.cpp) and keeps neither the sound nor the text. In some places it is against the law to record people without telling them, so let them know when you listen in.
 
 ## Build it yourself
 

@@ -166,7 +166,7 @@ static class Shots
         public IReadOnlyList<(string, Connector)> Agents => [("Claude Code", Claude), ("Cursor", new CursorConnector(Dir, "noch-hook.exe")), ("Codex", new CodexConnector(Path.Combine(Dir, "none"), "noch-hook.exe"))];
         public string? Try(Action a) => null;
         public void Refresh() { }
-        public string Version => "0.3.1";
+        public string Version => "0.3.2";
         public void CheckForUpdates(Action<string> tell) { }
         public string? Repo => "https://github.com/himathk/noch-release-v.01";
     }
