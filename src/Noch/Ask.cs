@@ -34,7 +34,12 @@ abstract class Assistant
 
     public static bool Both => new ClaudeCode().Exe != null && new Codex().Exe != null;
 
-    public abstract Task<string> Ask(string question, CancellationToken stop);
+    /// Asks and waits for the whole answer. `partial` hears the answer so far, while it is being written.
+    public abstract Task<string> Ask(string question, Action<string>? partial, CancellationToken stop);
+    /// Gets ready while the person is still talking, so less of the wait comes after.
+    public virtual void Warm() { }
+    /// Nothing is going to be asked after all.
+    public virtual void Cool() { }
 
     /// Looks where the installers put it, the way a terminal would.
     static string? Find(string name)
@@ -81,27 +86,90 @@ sealed class ClaudeCode : Assistant
 {
     public override string Name => "Claude";
     protected override string Command => "claude";
+    /// Spoken questions are short and someone is waiting, so the quick model answers.
+    const string Model = "sonnet";
+    Process? _warm;
 
-    public override async Task<string> Ask(string question, CancellationToken stop)
+    Process Start()
     {
         Directory.CreateDirectory(Folder);
         var brief = Path.Combine(Folder, "brief.txt");
-        await File.WriteAllTextAsync(brief, Brief, stop);
+        File.WriteAllText(brief, Brief);
+        var p = new ProcessStartInfo(Exe!)
+        {
+            WorkingDirectory = Folder, UseShellExecute = false, CreateNoWindow = true,
+            RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true,
+            StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8
+        };
+        // Takes the question as a message whenever it comes, and streams the answer back.
         // Only web search and fetch; no hooks, plugins or MCP servers from the user's own setup, and nothing saved.
-        var (_, output, err) = await Run(["-p", "--output-format", "json", "--setting-sources", "project", "--strict-mcp-config",
-            "--tools", "WebSearch,WebFetch", "--allowedTools", "WebSearch,WebFetch", "--no-session-persistence", "--system-prompt-file", brief], question, stop);
-        string? result = null; var failed = true;
+        foreach (var a in new[] { "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
+            "--model", Model, "--setting-sources", "project", "--strict-mcp-config", "--tools", "WebSearch,WebFetch", "--allowedTools", "WebSearch,WebFetch",
+            "--no-session-persistence", "--system-prompt-file", brief })
+            p.ArgumentList.Add(a);
+        return Process.Start(p) ?? throw new AskProblem("Claude Code didn't start");
+    }
+
+    public override void Warm()
+    {
+        Cool();
+        try { _warm = Start(); } catch (Exception e) { Noch.Program.Log(e); }
+    }
+
+    public override void Cool() { var p = _warm; _warm = null; if (p != null) Kill(p); }
+
+    static void Kill(Process p) { try { if (!p.HasExited) p.Kill(true); } catch { } p.Dispose(); }
+
+    static string? Str(JsonElement e, string name) =>
+        e.ValueKind == JsonValueKind.Object && e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+
+    public override async Task<string> Ask(string question, Action<string>? partial, CancellationToken stop)
+    {
+        var proc = _warm is { HasExited: false } w ? w : null;
+        _warm = null;
+        proc ??= Start();
         try
         {
-            using var doc = JsonDocument.Parse(output);
-            result = doc.RootElement.TryGetProperty("result", out var r) ? r.GetString() : null;
-            failed = doc.RootElement.TryGetProperty("is_error", out var e) && e.GetBoolean();
+            var err = proc.StandardError.ReadToEndAsync(CancellationToken.None);
+            await proc.StandardInput.WriteLineAsync(JsonSerializer.Serialize(new { type = "user", message = new { role = "user", content = question } }));
+            await proc.StandardInput.FlushAsync(stop);
+            var text = new StringBuilder();
+            string? result = null; var failed = false;
+            while (await proc.StandardOutput.ReadLineAsync(stop) is { } line)
+            {
+                JsonElement root;
+                try { using var d = JsonDocument.Parse(line); root = d.RootElement.Clone(); } catch (JsonException) { continue; }
+                var type = Str(root, "type");
+                if (type == "stream_event" && root.TryGetProperty("event", out var ev))
+                {
+                    // A new message after a search starts the answer over.
+                    if (Str(ev, "type") == "message_start") text.Clear();
+                    else if (Str(ev, "type") == "content_block_delta" && ev.TryGetProperty("delta", out var delta) && Str(delta, "type") == "text_delta")
+                    {
+                        text.Append(Str(delta, "text"));
+                        partial?.Invoke(text.ToString());
+                    }
+                }
+                else if (type == "result")
+                {
+                    result = Str(root, "result");
+                    failed = root.TryGetProperty("is_error", out var e) && e.ValueKind == JsonValueKind.True;
+                    break;
+                }
+            }
+            if (result is null)
+            {
+                // It stopped before answering; whatever it said on the way out is the reason.
+                proc.StandardInput.Close();
+                await Task.WhenAny(err, Task.Delay(2000, CancellationToken.None));
+                result = err.IsCompleted ? FirstLine(err.Result) : "";
+                failed = true;
+            }
+            if (SignedOut(result)) throw new AskProblem("Claude Code is signed out. Run claude in a terminal to sign in");
+            if (failed || string.IsNullOrWhiteSpace(result)) throw new AskProblem(result.Length > 0 ? "Claude: " + result : "Claude didn't answer");
+            return result.Trim();
         }
-        catch (JsonException) { }
-        var said = result ?? FirstLine(err + "\n" + output);
-        if (SignedOut(said)) throw new AskProblem("Claude Code is signed out. Run claude in a terminal to sign in");
-        if (failed || string.IsNullOrWhiteSpace(result)) throw new AskProblem(said.Length > 0 ? "Claude: " + said : "Claude didn't answer");
-        return result.Trim();
+        finally { Kill(proc); }
     }
 }
 
@@ -110,7 +178,7 @@ sealed class Codex : Assistant
     public override string Name => "Codex";
     protected override string Command => "codex";
 
-    public override async Task<string> Ask(string question, CancellationToken stop)
+    public override async Task<string> Ask(string question, Action<string>? partial, CancellationToken stop)
     {
         Directory.CreateDirectory(Folder);
         var answer = Path.Combine(Folder, "answer.txt");

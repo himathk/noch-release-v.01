@@ -12,7 +12,7 @@ namespace Noch;
 sealed class VoiceView : View
 {
     readonly VoiceService _v;
-    readonly TextBlock? _clock, _percent;
+    readonly TextBlock? _clock, _percent, _answer;
 
     public VoiceView(IHost h) : base(h)
     {
@@ -63,7 +63,7 @@ sealed class VoiceView : View
                 W = 440;
                 var asked = Caption(_v.Question);
                 asked.TextWrapping = TextWrapping.Wrap; asked.TextTrimming = TextTrimming.None;
-                var answer = Label(_v.Text);
+                var answer = _answer = Label(_v.Text);
                 answer.TextWrapping = TextWrapping.Wrap; answer.TextTrimming = TextTrimming.None;
                 var col = Col(6);
                 col.Children.Add(asked);
@@ -106,7 +106,12 @@ sealed class VoiceView : View
     }
 
     public override bool ClickThrough => _v.Now is Phase.Listening or Phase.Working;
-    public override void Update() { if (_percent != null) _percent.Text = (int)(_v.Progress * 100) + "%"; }
+    public override void Update()
+    {
+        if (_percent != null) _percent.Text = (int)(_v.Progress * 100) + "%";
+        // The answer grows in place as it streams in.
+        if (_answer != null && _v.Now == Phase.Answer) _answer.Text = _v.Text;
+    }
     public override void Tick() { if (_clock != null) _clock.Text = Clock(DateTime.UtcNow - _v.Started); }
 }
 

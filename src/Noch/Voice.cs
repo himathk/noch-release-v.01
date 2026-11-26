@@ -22,7 +22,8 @@ sealed class VoiceService
     readonly DispatcherTimer _keys = new() { Interval = TimeSpan.FromMilliseconds(40) }, _away = new();
     readonly HoldKeys _hold = new();
     IMic? _mic;
-    WhisperFactory? _whisper;
+    Assistant? _who;
+    Task<WhisperFactory>? _whisper;
     CancellationTokenSource? _work;
 
     public Phase Now { get; private set; }
@@ -95,16 +96,30 @@ sealed class VoiceService
         try { _mic = open(); }
         catch (Exception e) { Program.Log(e); Set(Phase.Note, "No microphone to listen with", TimeSpan.FromSeconds(3)); return; }
         Started = DateTime.UtcNow;
+        // Claude Code takes a few seconds to start, so it starts while the question is still being asked.
+        _who?.Cool();
+        _who = Assistant.Pick(_settings);
+        _who?.Warm();
+        _ = Load().ContinueWith(t => _whisper = null, TaskContinuationOptions.OnlyOnFaulted);
         Set(Phase.Listening);
     }
 
     void Cancel()
     {
         _mic?.Stop(); _mic = null;
+        _who?.Cool();
         Set(Phase.Off);
     }
 
     async void Finish()
+    {
+        var who = _who;
+        try { await Hear(who); }
+        // Whatever happened, a copy that was started and never asked is not left running.
+        finally { who?.Cool(); }
+    }
+
+    async Task Hear(Assistant? who)
     {
         var mic = _mic; _mic = null;
         if (mic is null) { Set(Phase.Off); return; }
@@ -120,14 +135,19 @@ sealed class VoiceService
             if (work.IsCancellationRequested) return;
             if (text.Length == 0) { Set(Phase.Note, "Didn't catch that", TimeSpan.FromSeconds(3)); return; }
             // Without Claude Code or Codex there is no one to ask, so it shows what it heard.
-            if (Assistant.Pick(_settings) is not { } who) { Set(Phase.Said, text, TimeSpan.FromSeconds(Math.Clamp(3 + text.Length / 15.0, 5, 20))); return; }
+            if (who is null) { Set(Phase.Said, text, TimeSpan.FromSeconds(Math.Clamp(3 + text.Length / 15.0, 5, 20))); return; }
             Question = text; By = who.Name;
             Set(Phase.Asking, text);
             using var limit = CancellationTokenSource.CreateLinkedTokenSource(work.Token);
             limit.CancelAfter(TimeSpan.FromMinutes(2));
             string answer;
-            try { answer = await who.Ask(text, limit.Token); }
+            // The answer shows as it is written, rather than all at once at the end.
+            void Partial(string so) => _ui.BeginInvoke(() => { if (!work.IsCancellationRequested && Now is Phase.Asking or Phase.Answer) Set(Phase.Answer, so); });
+            try { answer = await who.Ask(text, Partial, limit.Token); }
             catch (OperationCanceledException) when (!work.IsCancellationRequested) { throw new AskProblem($"{who.Name} took too long to answer"); }
+            if (work.IsCancellationRequested) return;
+            // Let the last streamed piece land first, so it cannot overwrite the whole answer.
+            await _ui.InvokeAsync(() => { }, DispatcherPriority.Background);
             if (work.IsCancellationRequested) return;
             Set(Phase.Answer, answer, TimeSpan.FromSeconds(Math.Clamp(8 + answer.Length / 12.0, 12, 90)));
         }
@@ -141,12 +161,17 @@ sealed class VoiceService
 
     async Task<string> Transcribe(float[] samples, CancellationToken stop)
     {
-        _whisper ??= WhisperFactory.FromPath(ModelPath);
-        using var p = _whisper.CreateBuilder().WithLanguage("en").Build();
+        WhisperFactory model;
+        try { model = await Load(); }
+        catch { _whisper = null; throw; }
+        using var p = model.CreateBuilder().WithLanguage("en").WithThreads(Math.Clamp(Environment.ProcessorCount / 2, 2, 8)).Build();
         var parts = new List<string>();
         await foreach (var s in p.ProcessAsync(samples, stop)) parts.Add(s.Text);
         return Clean(string.Concat(parts));
     }
+
+    /// Read from disk once, while the first question is still being asked.
+    Task<WhisperFactory> Load() => _whisper ??= Task.Run(() => WhisperFactory.FromPath(ModelPath));
 
     /// Whisper names silence and noises in brackets, like [BLANK_AUDIO] or (wind blowing).
     internal static string Clean(string s)

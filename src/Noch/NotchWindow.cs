@@ -192,7 +192,8 @@ sealed class NotchWindow : Window, IHost
             NotchState.Approval or NotchState.Question => State + ":" + pending?.GetHashCode(),
             NotchState.Done or NotchState.Failed => State + ":" + Hub.Toast?.At.Ticks,
             NotchState.Compact => State + ":" + (int)show,
-            NotchState.Voice => State + ":" + S.Voice.Now + S.Voice.Text + S.Voice.Question,
+            // A streaming answer is the same card growing, not a new one each word.
+            NotchState.Voice => State + ":" + S.Voice.Now + (S.Voice.Now == VoiceService.Phase.Answer ? "" : S.Voice.Text) + S.Voice.Question,
             // A level moving up or down is the same message.
             NotchState.Notice => State + ":" + notice?.Id + (notice?.Kind == NoticeKind.Volume ? "" : notice?.At.Ticks),
             _ => State.ToString()
