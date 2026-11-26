@@ -45,6 +45,33 @@ sealed class VoiceView : View
                 Content = NoticeView.Tappable(h, col, "Clear", _v.Dismiss);
                 break;
             }
+            case Phase.Asking:
+            {
+                // What was asked, with the dots thinking beside it until the answer comes.
+                W = 440;
+                var asked = Label(_v.Question, Text2);
+                asked.TextWrapping = TextWrapping.Wrap; asked.TextTrimming = TextTrimming.None;
+                var col = Col(3);
+                col.Children.Add(Caption("Asking " + _v.By)); col.Children.Add(asked);
+                var bar = Bar(new DotMatrix(Dots.Think) { VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, 2, 0, 0) }, col, null);
+                bar.Margin = new Thickness(16, 11, 16, 12);
+                Content = NoticeView.Tappable(h, bar, "Stop", _v.Dismiss);
+                break;
+            }
+            case Phase.Answer:
+            {
+                W = 440;
+                var asked = Caption(_v.Question);
+                asked.TextWrapping = TextWrapping.Wrap; asked.TextTrimming = TextTrimming.None;
+                var answer = Label(_v.Text);
+                answer.TextWrapping = TextWrapping.Wrap; answer.TextTrimming = TextTrimming.None;
+                var col = Col(6);
+                col.Children.Add(asked);
+                col.Children.Add(new ScrollViewer { Content = answer, MaxHeight = 240, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Focusable = false });
+                col.Margin = new Thickness(16, 11, 16, 12);
+                Content = NoticeView.Tappable(h, col, "Clear", _v.Dismiss);
+                break;
+            }
             case Phase.NeedsModel:
             {
                 W = 420;
@@ -68,10 +95,11 @@ sealed class VoiceView : View
             }
             default:
             {
-                W = 340; Height = 36; Radius = 14; Ear = 8;
-                var bar = Bar(null, Label(_v.Text), null);
-                bar.Margin = new Thickness(14, 0, 14, 0); bar.VerticalAlignment = VerticalAlignment.Center;
-                Content = NoticeView.Tappable(h, new Border { Height = 36, Child = bar }, "Clear", _v.Dismiss);
+                W = 380;
+                var said = Label(_v.Text);
+                said.TextWrapping = TextWrapping.Wrap; said.TextTrimming = TextTrimming.None;
+                said.Margin = new Thickness(16, 9, 16, 9);
+                Content = NoticeView.Tappable(h, said, "Clear", _v.Dismiss);
                 break;
             }
         }

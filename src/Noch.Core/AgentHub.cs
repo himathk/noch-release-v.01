@@ -22,6 +22,11 @@ public sealed class AgentHub
     public Func<bool> Busy { get; set; } = () => false;
     public TimeSpan QuestionTimeout { get; set; } = TimeSpan.FromMinutes(2);
     public TimeSpan MinTurnForToast { get; set; } = TimeSpan.FromSeconds(5);
+    /// Where Noch asks its own questions. Agents working there are Noch itself, so they are not shown.
+    public string? Hidden { get; set; }
+
+    bool IsHidden(string cwd) => Hidden is { } h && cwd.Length > 0
+        && string.Equals(Path.TrimEndingDirectorySeparator(cwd), Path.TrimEndingDirectorySeparator(h), StringComparison.OrdinalIgnoreCase);
 
     public IReadOnlyList<AgentSession> Sessions { get { lock (_gate) return [.. _sessions.Values]; } }
     public IReadOnlyList<PendingRequest> Pending { get { lock (_gate) return [.. _pending]; } }
@@ -50,7 +55,7 @@ public sealed class AgentHub
 
     PendingRequest? Apply(HookEvent e)
     {
-        if (e.SessionId.Length == 0) return null;
+        if (e.SessionId.Length == 0 || IsHidden(e.Cwd)) return null;
         var key = e.Source + ":" + e.SessionId;
         if (e.Name is "SessionEnd" or "sessionEnd") { Drop(key); return null; }
 

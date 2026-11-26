@@ -156,7 +156,8 @@ sealed class SettingsWindow : Window
         Toggle("Scroll over music to change volume", "", () => st.WheelVolume, on => { st.WheelVolume = on; Save(); });
         Toggle("Battery messages", "When you plug in, and when it runs low", () => st.PowerAlerts, on => { st.PowerAlerts = on; Save(); });
         Toggle("Open with Ctrl Alt .", "Opens and closes the notch from anywhere", () => st.Shortcut, on => { st.Shortcut = on; Save(); });
-        Toggle("Hold Ctrl Alt to talk", "It listens only while you hold both keys", () => st.Voice, on => { st.Voice = on; Save(); });
+        Toggle("Hold Ctrl Alt to talk", "It listens only while you hold both keys, then asks Claude Code or Codex", () => st.Voice, on => { st.Voice = on; Save(); });
+        if (Assistant.Both) Toggle("Answer with Codex", "Off: Claude Code answers", () => st.AnswerWithCodex, on => { st.AnswerWithCodex = on; Save(); });
 
         Head("Your week");
         {

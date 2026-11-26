@@ -105,6 +105,7 @@ static class Program
                 Shelf = new Shelf(Path.Combine(Settings.Folder, "shelf.json")), Stats = new Stats(Path.Combine(Settings.Folder, "stats.json")),
                 Calendar = new CalendarService(_settings, notices, sounds), Notifications = new NotificationService(_settings, notices), Voice = new VoiceService(_settings), OpenSettings = OpenSettings
             };
+            _hub.Hidden = Assistant.Folder;
             _server = new HookServer(_hub, Name == "Noch" ? null : "noch-dev", _s.Usage);
             _server.Start();
             Wire();

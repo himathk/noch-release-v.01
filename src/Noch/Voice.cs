@@ -10,7 +10,7 @@ namespace Noch;
 /// Hold Ctrl and Alt, talk, let go: what was said is written down on this PC.
 sealed class VoiceService
 {
-    public enum Phase { Off, Listening, Working, Said, Note, NeedsModel, Downloading }
+    public enum Phase { Off, Listening, Working, Said, Asking, Answer, Note, NeedsModel, Downloading }
 
     const string ModelName = "ggml-base.en.bin";
     const string ModelUrl = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/" + ModelName;
@@ -27,6 +27,10 @@ sealed class VoiceService
 
     public Phase Now { get; private set; }
     public string Text { get; private set; } = "";
+    /// What was asked, while it is being answered and after.
+    public string Question { get; private set; } = "";
+    /// Who is answering: Claude or Codex.
+    public string By { get; private set; } = "";
     public DateTime Started { get; private set; }
     public double Progress { get; private set; }
     /// How loud it is right now, 0 to 1.
@@ -40,7 +44,7 @@ sealed class VoiceService
     {
         _settings = settings;
         _keys.Tick += (_, _) => WatchKeys();
-        _away.Tick += (_, _) => { _away.Stop(); if (Now is Phase.Said or Phase.Note or Phase.NeedsModel) Set(Phase.Off); };
+        _away.Tick += (_, _) => { _away.Stop(); if (Now is Phase.Said or Phase.Answer or Phase.Note or Phase.NeedsModel) Set(Phase.Off); };
         _keys.Start();
     }
 
@@ -114,13 +118,24 @@ sealed class VoiceService
         {
             var text = await Task.Run(() => Transcribe(samples, work.Token));
             if (work.IsCancellationRequested) return;
-            if (text.Length == 0) Set(Phase.Note, "Didn't catch that", TimeSpan.FromSeconds(3));
-            else Set(Phase.Said, text, TimeSpan.FromSeconds(Math.Clamp(3 + text.Length / 15.0, 5, 20)));
+            if (text.Length == 0) { Set(Phase.Note, "Didn't catch that", TimeSpan.FromSeconds(3)); return; }
+            // Without Claude Code or Codex there is no one to ask, so it shows what it heard.
+            if (Assistant.Pick(_settings) is not { } who) { Set(Phase.Said, text, TimeSpan.FromSeconds(Math.Clamp(3 + text.Length / 15.0, 5, 20))); return; }
+            Question = text; By = who.Name;
+            Set(Phase.Asking, text);
+            using var limit = CancellationTokenSource.CreateLinkedTokenSource(work.Token);
+            limit.CancelAfter(TimeSpan.FromMinutes(2));
+            string answer;
+            try { answer = await who.Ask(text, limit.Token); }
+            catch (OperationCanceledException) when (!work.IsCancellationRequested) { throw new AskProblem($"{who.Name} took too long to answer"); }
+            if (work.IsCancellationRequested) return;
+            Set(Phase.Answer, answer, TimeSpan.FromSeconds(Math.Clamp(8 + answer.Length / 12.0, 12, 90)));
         }
+        catch (AskProblem p) when (!work.IsCancellationRequested) { Set(Phase.Note, p.Message, TimeSpan.FromSeconds(8)); }
         catch (Exception e) when (!work.IsCancellationRequested)
         {
             Program.Log(e);
-            Set(Phase.Note, "Couldn't write that down", TimeSpan.FromSeconds(3));
+            Set(Phase.Note, Now == Phase.Asking ? $"Couldn't reach {By}" : "Couldn't write that down", TimeSpan.FromSeconds(4));
         }
     }
 
@@ -149,7 +164,13 @@ sealed class VoiceService
     }
 #endif
 
-    public void Dismiss() { if (Now is not (Phase.Listening or Phase.Working or Phase.Downloading)) Set(Phase.Off); }
+    public void Dismiss()
+    {
+        if (Now is Phase.Listening or Phase.Working or Phase.Downloading) return;
+        // Waved away while waiting: the answer is no longer wanted.
+        if (Now == Phase.Asking) _work?.Cancel();
+        Set(Phase.Off);
+    }
 
     // ---- the speech file, fetched once ----
 

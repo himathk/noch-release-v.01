@@ -326,6 +326,15 @@ public sealed class OvernightTests : IDisposable
         hub.Clear("nobody");
     }
 
+    [Fact]
+    public async Task Questions_noch_asks_itself_never_show_up_as_agents()
+    {
+        var hub = new AgentHub { Hidden = "C:/Users/a/AppData/Roaming/Noch/ask" };
+        await hub.HandleAsync(E("q", "UserPromptSubmit", cwd: "C:/Users/a/AppData/Roaming/Noch/ask/"));
+        await hub.HandleAsync(E("w", "UserPromptSubmit"));
+        Assert.Equal(["claude:w"], hub.Sessions.Select(s => s.Key));
+    }
+
     // ---- what is on screen ----
 
     [Fact]
