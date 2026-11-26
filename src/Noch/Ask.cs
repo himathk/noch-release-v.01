@@ -17,10 +17,16 @@ abstract class Assistant
     string? _exe;
 
     /// Kept to plain sentences, because they are shown in a small card and may be read aloud later.
-    protected const string Brief = "You answer questions spoken aloud to a small notch at the top of the user's Windows screen. "
+    public const string Brief = "You answer questions spoken aloud to a small notch at the top of the user's Windows screen. "
         + "The question was written down by speech recognition, so read past small mistakes in it. "
         + "Reply in plain text with no markdown, in at most three short sentences unless more is truly needed. "
         + "Search the web when the question needs current or local information. Never change files or run programs.";
+
+    /// For listening in: the questions come from other people, in the middle of a conversation.
+    public const string Meeting = "You quietly help the user during a live meeting or conversation, shown in a small notch at the top of their Windows screen. "
+        + "You get a transcript written by speech recognition, so expect mistakes in it. Lines marked [Them] are the sound from the computer, usually other people on a call; "
+        + "lines marked [You] are the user's microphone, the user or people in the room with them. "
+        + "Reply in plain text with no markdown. Search the web when the question needs current information. Never change files or run programs.";
 
     /// The folder questions are asked from. It holds nothing, so no project's rules or tools come along.
     public static string Folder => Path.Combine(Settings.Folder, "ask");
@@ -35,9 +41,9 @@ abstract class Assistant
     public static bool Both => new ClaudeCode().Exe != null && new Codex().Exe != null;
 
     /// Asks and waits for the whole answer. `partial` hears the answer so far, while it is being written.
-    public abstract Task<string> Ask(string question, Action<string>? partial, CancellationToken stop);
+    public abstract Task<string> Ask(string question, Action<string>? partial, CancellationToken stop, string brief = Brief);
     /// Gets ready while the person is still talking, so less of the wait comes after.
-    public virtual void Warm() { }
+    public virtual void Warm(string brief = Brief) { }
     /// Nothing is going to be asked after all.
     public virtual void Cool() { }
 
@@ -89,12 +95,13 @@ sealed class ClaudeCode : Assistant
     /// Spoken questions are short and someone is waiting, so the quick model answers.
     const string Model = "sonnet";
     Process? _warm;
+    string? _warmFor;
 
-    Process Start()
+    Process Start(string text)
     {
         Directory.CreateDirectory(Folder);
-        var brief = Path.Combine(Folder, "brief.txt");
-        File.WriteAllText(brief, Brief);
+        var brief = Path.Combine(Folder, text == Meeting ? "meeting.txt" : "brief.txt");
+        File.WriteAllText(brief, text);
         var p = new ProcessStartInfo(Exe!)
         {
             WorkingDirectory = Folder, UseShellExecute = false, CreateNoWindow = true,
@@ -110,10 +117,10 @@ sealed class ClaudeCode : Assistant
         return Process.Start(p) ?? throw new AskProblem("Claude Code didn't start");
     }
 
-    public override void Warm()
+    public override void Warm(string brief = Brief)
     {
         Cool();
-        try { _warm = Start(); } catch (Exception e) { Noch.Program.Log(e); }
+        try { _warm = Start(brief); _warmFor = brief; } catch (Exception e) { Noch.Program.Log(e); }
     }
 
     public override void Cool() { var p = _warm; _warm = null; if (p != null) Kill(p); }
@@ -123,11 +130,11 @@ sealed class ClaudeCode : Assistant
     static string? Str(JsonElement e, string name) =>
         e.ValueKind == JsonValueKind.Object && e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
 
-    public override async Task<string> Ask(string question, Action<string>? partial, CancellationToken stop)
+    public override async Task<string> Ask(string question, Action<string>? partial, CancellationToken stop, string brief = Brief)
     {
-        var proc = _warm is { HasExited: false } w ? w : null;
-        _warm = null;
-        proc ??= Start();
+        var proc = _warm is { HasExited: false } w && _warmFor == brief ? w : null;
+        if (proc is null) Cool(); else _warm = null;
+        proc ??= Start(brief);
         try
         {
             var err = proc.StandardError.ReadToEndAsync(CancellationToken.None);
@@ -178,13 +185,13 @@ sealed class Codex : Assistant
     public override string Name => "Codex";
     protected override string Command => "codex";
 
-    public override async Task<string> Ask(string question, Action<string>? partial, CancellationToken stop)
+    public override async Task<string> Ask(string question, Action<string>? partial, CancellationToken stop, string brief = Brief)
     {
         Directory.CreateDirectory(Folder);
         var answer = Path.Combine(Folder, "answer.txt");
         File.Delete(answer);
         var (code, output, err) = await Run(["exec", "--skip-git-repo-check", "--sandbox", "read-only", "-c", "web_search=live", "-o", answer, "-"],
-            Brief + "\n\nThe question:\n" + question, stop);
+            brief + "\n\n" + question, stop);
         var result = File.Exists(answer) ? (await File.ReadAllTextAsync(answer, stop)).Trim() : "";
         if (result.Length > 0) return result;
         var said = FirstLine(err.Length > 0 ? err : output);

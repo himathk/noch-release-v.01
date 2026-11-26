@@ -23,7 +23,6 @@ sealed class VoiceService
     readonly HoldKeys _hold = new();
     IMic? _mic;
     Assistant? _who;
-    Task<WhisperFactory>? _whisper;
     CancellationTokenSource? _work;
 
     public Phase Now { get; private set; }
@@ -100,7 +99,7 @@ sealed class VoiceService
         _who?.Cool();
         _who = Assistant.Pick(_settings);
         _who?.Warm();
-        _ = Load().ContinueWith(t => _whisper = null, TaskContinuationOptions.OnlyOnFaulted);
+        Speech.Preload();
         Set(Phase.Listening);
     }
 
@@ -131,7 +130,7 @@ sealed class VoiceService
         var work = _work = new CancellationTokenSource();
         try
         {
-            var text = await Task.Run(() => Transcribe(samples, work.Token));
+            var text = await Speech.Write(samples, work.Token);
             if (work.IsCancellationRequested) return;
             if (text.Length == 0) { Set(Phase.Note, "Didn't catch that", TimeSpan.FromSeconds(3)); return; }
             // Without Claude Code or Codex there is no one to ask, so it shows what it heard.
@@ -159,27 +158,6 @@ sealed class VoiceService
         }
     }
 
-    async Task<string> Transcribe(float[] samples, CancellationToken stop)
-    {
-        WhisperFactory model;
-        try { model = await Load(); }
-        catch { _whisper = null; throw; }
-        using var p = model.CreateBuilder().WithLanguage("en").WithThreads(Math.Clamp(Environment.ProcessorCount / 2, 2, 8)).Build();
-        var parts = new List<string>();
-        await foreach (var s in p.ProcessAsync(samples, stop)) parts.Add(s.Text);
-        return Clean(string.Concat(parts));
-    }
-
-    /// Read from disk once, while the first question is still being asked.
-    Task<WhisperFactory> Load() => _whisper ??= Task.Run(() => WhisperFactory.FromPath(ModelPath));
-
-    /// Whisper names silence and noises in brackets, like [BLANK_AUDIO] or (wind blowing).
-    internal static string Clean(string s)
-    {
-        s = System.Text.RegularExpressions.Regex.Replace(s, @"\[[^\]]*\]|\([^)]*\)|\*[^*]*\*", " ");
-        return System.Text.RegularExpressions.Regex.Replace(s, @"\s+", " ").Trim();
-    }
-
 #if DEBUG
     /// Plays a recording in place of the microphone, for testing without anyone talking.
     public void DemoTalk(string wav)
@@ -188,6 +166,22 @@ sealed class VoiceService
         if (_mic is FileMic f) { var t = new DispatcherTimer { Interval = f.Length + TimeSpan.FromMilliseconds(300) }; t.Tick += (_, _) => { t.Stop(); Finish(); }; t.Start(); }
     }
 #endif
+
+    /// An answer found while listening in. It waits if the person is asking something of their own.
+    public void Offer(string question, string text, string by, bool final)
+    {
+        if (Now is Phase.Listening or Phase.Working or Phase.Asking or Phase.NeedsModel or Phase.Downloading) return;
+        Question = question; By = by;
+        Set(Phase.Answer, text, final ? TimeSpan.FromSeconds(Math.Clamp(15 + text.Length / 10.0, 30, 120)) : null);
+    }
+
+    /// It started answering, then decided the question needed no help.
+    public void Withdraw(string question) { if (Now == Phase.Answer && Question == question) Set(Phase.Off); }
+
+    /// A short message, unless something more important is on show.
+    public void Tell(string text) { if (Now is Phase.Off or Phase.Note or Phase.Said or Phase.Answer) Set(Phase.Note, text, TimeSpan.FromSeconds(4)); }
+
+    public void NeedModel() { if (Now is not (Phase.Listening or Phase.Working or Phase.Downloading)) Set(Phase.NeedsModel, stay: TimeSpan.FromSeconds(12)); }
 
     public void Dismiss()
     {
@@ -253,13 +247,20 @@ sealed class FileMic : IMic
     readonly DateTime _start = DateTime.UtcNow;
     public FileMic(string wav)
     {
+        _all = Read(wav);
+        Loudest = _all.Length == 0 ? 0 : _all.Max(Math.Abs);
+    }
+
+    /// The samples of a 16 kHz, 16-bit mono wave file.
+    public static float[] Read(string wav)
+    {
         var b = File.ReadAllBytes(wav);
         var at = 12;
         while (at + 8 <= b.Length && System.Text.Encoding.ASCII.GetString(b, at, 4) != "data") at += 8 + BitConverter.ToInt32(b, at + 4);
-        var n = BitConverter.ToInt32(b, at + 4) / 2;
-        _all = new float[n];
-        for (var i = 0; i < n; i++) _all[i] = BitConverter.ToInt16(b, at + 8 + i * 2) / 32768f;
-        Loudest = _all.Length == 0 ? 0 : _all.Max(Math.Abs);
+        var n = Math.Min(BitConverter.ToInt32(b, at + 4), b.Length - at - 8) / 2;
+        var all = new float[n];
+        for (var i = 0; i < n; i++) all[i] = BitConverter.ToInt16(b, at + 8 + i * 2) / 32768f;
+        return all;
     }
     public TimeSpan Length => TimeSpan.FromSeconds(_all.Length / (double)Microphone.Rate);
     int Heard => Math.Min(_all.Length, (int)((DateTime.UtcNow - _start).TotalSeconds * Microphone.Rate));
@@ -293,9 +294,14 @@ sealed class Microphone : IMic
 
     public double Level => Volatile.Read(ref _level);
     public double Loudest => _loudest;
+    /// Each tenth of a second as it arrives, on the recording thread.
+    public event Action<float[]>? Heard;
+    readonly bool _keep;
 
-    public Microphone()
+    /// `keep` false hands everything on through Heard and holds on to nothing, for listening all through a meeting.
+    public Microphone(bool keep = true)
     {
+        _keep = keep;
         var f = new WAVEFORMATEX { wFormatTag = 1, nChannels = 1, nSamplesPerSec = Rate, nAvgBytesPerSec = Rate * 2, nBlockAlign = 2, wBitsPerSample = 16 };
         var err = waveInOpen(out _h, -1, ref f, IntPtr.Zero, IntPtr.Zero, 0);
         if (err != 0) throw new IOException("The microphone could not be opened (" + err + ").");
@@ -339,8 +345,10 @@ sealed class Microphone : IMic
         var raw = new short[n];
         Marshal.Copy(hdr.lpData, raw, 0, n);
         double sum = 0;
-        lock (_samples)
-            foreach (var v in raw) { var x = v / 32768f; _samples.Add(x); sum += x * x; }
+        var got = new float[n];
+        for (var i = 0; i < n; i++) { var x = got[i] = raw[i] / 32768f; sum += x * x; }
+        if (_keep) lock (_samples) _samples.AddRange(got);
+        Heard?.Invoke(got);
         var rms = Math.Sqrt(sum / n);
         _loudest = Math.Max(_loudest, rms);
         Volatile.Write(ref _level, ToLevel(rms));
@@ -382,4 +390,39 @@ sealed class Microphone : IMic
     [DllImport("winmm")] static extern int waveInStart(IntPtr h);
     [DllImport("winmm")] static extern int waveInReset(IntPtr h);
     [DllImport("winmm")] static extern int waveInClose(IntPtr h);
+}
+
+/// Turns speech into text on this PC with Whisper. One piece at a time, shared by asking and listening in.
+static class Speech
+{
+    static Task<WhisperFactory>? _model;
+    static readonly SemaphoreSlim One = new(1, 1);
+
+    /// Read from disk once, while the first words are still being said.
+    static Task<WhisperFactory> Load() => _model ??= Task.Run(() => WhisperFactory.FromPath(VoiceService.ModelPath));
+
+    public static void Preload() => _ = Load().ContinueWith(_ => _model = null, TaskContinuationOptions.OnlyOnFaulted);
+
+    public static async Task<string> Write(float[] samples, CancellationToken stop)
+    {
+        WhisperFactory model;
+        try { model = await Load(); }
+        catch { _model = null; throw; }
+        await One.WaitAsync(stop);
+        try
+        {
+            using var p = model.CreateBuilder().WithLanguage("en").WithThreads(Math.Clamp(Environment.ProcessorCount / 2, 2, 8)).Build();
+            var parts = new List<string>();
+            await foreach (var s in p.ProcessAsync(samples, stop)) parts.Add(s.Text);
+            return Clean(string.Concat(parts));
+        }
+        finally { One.Release(); }
+    }
+
+    /// Whisper names silence and noises in brackets, like [BLANK_AUDIO] or (wind blowing).
+    internal static string Clean(string s)
+    {
+        s = System.Text.RegularExpressions.Regex.Replace(s, @"\[[^\]]*\]|\([^)]*\)|\*[^*]*\*", " ");
+        return System.Text.RegularExpressions.Regex.Replace(s, @"\s+", " ").Trim();
+    }
 }

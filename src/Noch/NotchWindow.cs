@@ -60,6 +60,8 @@ sealed class NotchWindow : Window, IHost
         S.Timer.Changed += () => Dispatcher.BeginInvoke(() => { _settings.Save(); Sync(); });
         S.Shelf.Changed += () => Dispatcher.BeginInvoke(Sync);
         S.Voice.Changed += () => Dispatcher.BeginInvoke(Sync);
+        S.Listen.Changed += () => Dispatcher.BeginInvoke(Sync);
+        DotMatrix.ListenLevel = () => S.Listen.Level;
         S.Calendar.Changed += () => Dispatcher.BeginInvoke(Sync);
         S.Usage.Changed += () => Dispatcher.BeginInvoke(() => { if (_panel == Panel.Peek) Sync(); });
         _tick.Tick += (_, _) => OnTick();
@@ -88,6 +90,8 @@ sealed class NotchWindow : Window, IHost
         HwndSource.FromHwnd(_hwnd)!.AddHook(WndProc);
         Place();
         Shortcut();
+        // Ctrl Alt L, to listen in on a meeting and back.
+        Native.RegisterHotKey(_hwnd, 4, Native.MOD_CONTROL | Native.MOD_ALT | Native.MOD_NOREPEAT, 'L');
         _tick.Start(); _poll.Start();
         Sync();
     }
@@ -124,7 +128,8 @@ sealed class NotchWindow : Window, IHost
     IntPtr WndProc(IntPtr h, int msg, IntPtr w, IntPtr l, ref bool handled)
     {
         if (msg == Native.WM_MOUSEACTIVATE && !_typing) { handled = true; return Native.MA_NOACTIVATE; }
-        if (msg == Native.WM_HOTKEY && w == 3)
+        if (msg == Native.WM_HOTKEY && w == 4) { handled = true; if (_settings.Voice) S.Listen.Toggle(); }
+        else if (msg == Native.WM_HOTKEY && w == 3)
         {
             handled = true;
             if (_drag is null) { if (_panel == Panel.None) Welcome(); else Dismiss(); }
@@ -182,7 +187,7 @@ sealed class NotchWindow : Window, IHost
         if (_hwnd == IntPtr.Zero || _quiet) return;
         if (_panel == Panel.Player && Media.Current is null) _panel = Panel.None;
         var notice = S.Notices.Current;
-        var scene = new Scene(_fullscreen, _covered && !_settings.AlwaysFull, _panel, MusicVisible, S.Timer.Active, S.Calendar.Soon(DateTime.UtcNow) != null, notice, S.Timer.Quiet, S.Voice.Showing && _drag is null);
+        var scene = new Scene(_fullscreen, _covered && !_settings.AlwaysFull, _panel, MusicVisible, S.Timer.Active, S.Calendar.Soon(DateTime.UtcNow) != null, notice, S.Timer.Quiet, S.Voice.Showing && _drag is null, S.Listen.On);
         State = Presenter.Choose(Hub, scene);
         var show = scene.Bar(Hub.Sessions.Any(Presenter.Active));
         if (_drag != null) { _drag.Kind = BubbleDots; return; }
@@ -517,7 +522,7 @@ sealed class NotchWindow : Window, IHost
     }
 
     Core.Show _bar;
-    Core.Show Bar => (MusicVisible ? Core.Show.Music : 0) | (S.Timer.Active ? Core.Show.Timer : 0) | (S.Calendar.Soon(DateTime.UtcNow) != null ? Core.Show.Meeting : 0);
+    Core.Show Bar => (MusicVisible ? Core.Show.Music : 0) | (S.Timer.Active ? Core.Show.Timer : 0) | (S.Calendar.Soon(DateTime.UtcNow) != null ? Core.Show.Meeting : 0) | (S.Listen.On ? Core.Show.Listen : 0);
 
     DateTime _measured;
     bool _measuring;

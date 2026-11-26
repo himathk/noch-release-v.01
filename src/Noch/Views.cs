@@ -83,6 +83,7 @@ sealed class StripView : View
     {
         _bars.Children.Clear();
         void Add(Brush b) => _bars.Children.Add(new Rectangle { Width = Host.Vertical ? 3 : 28, Height = Host.Vertical ? 28 : 3, RadiusX = 1.5, RadiusY = 1.5, Fill = b });
+        if (Host.S.Listen.On) Add(Theme.Brush(DotMatrix.ListenColor));
         foreach (var s in Presenter.Ordered(Host.Hub.Sessions.Where(Presenter.Active)).Take(6)) Add(Presenter.NeedsYou(s) ? Need : Text);
         if (Host.S.Timer.Active) Add(Theme.Brush(Host.S.Timer.IsBreak ? DoneColor : TextColor, .55));
         if (Host.S.Calendar.Soon(DateTime.UtcNow) is { } meet) Add(meet.Start - DateTime.UtcNow < TimeSpan.FromMinutes(2) ? Need : Text2);
@@ -95,14 +96,14 @@ sealed class StripView : View
 sealed class CompactView : View
 {
     readonly Show _show, _first;
-    readonly DotMatrix _dots = new(Dots.Think), _eq = new(Dots.Music), _timer = new(Dots.Timer), _meet = new(Dots.Meeting);
-    readonly TextBlock _label = Label(""), _more = MonoText(""), _time = MonoText(""), _title = Label(""), _artist = Label("", Text3), _left = MonoText("", Text2), _meeting = Label(""), _soon = MonoText("", Need), _focus = Label("");
+    readonly DotMatrix _dots = new(Dots.Think), _eq = new(Dots.Music), _timer = new(Dots.Timer), _meet = new(Dots.Meeting), _ear = new(Dots.Listen) { Tint = DotMatrix.ListenColor };
+    readonly TextBlock _label = Label(""), _more = MonoText(""), _time = MonoText(""), _title = Label(""), _artist = Label("", Text3), _left = MonoText("", Text2), _meeting = Label(""), _soon = MonoText("", Need), _focus = Label(""), _heard = Label("", Text2), _since = MonoText("");
     readonly Border _cover = Cover(null, 22, 22, 6);
 
     public CompactView(IHost h, Show show) : base(h)
     {
         _show = show;
-        _first = new[] { Show.Agent, Show.Meeting, Show.Timer, Show.Music }.First(s => show.HasFlag(s));
+        _first = new[] { Show.Agent, Show.Listen, Show.Meeting, Show.Timer, Show.Music }.First(s => show.HasFlag(s));
         MouseLeftButtonUp += (_, e) =>
         {
             if (e.Handled) return;
@@ -112,7 +113,7 @@ sealed class CompactView : View
         if (h.Vertical) { W = 44; Radius = 16; Ear = 8; Upright(); Update(); Tick(); return; }
         Height = 36; Radius = 14; Ear = 8;
         bool Also(Show s) => show.HasFlag(s) && s != _first;
-        W = 300 + (Also(Show.Music) ? 64 : 0) + (Also(Show.Timer) ? 48 : 0) + (Also(Show.Meeting) ? 62 : 0);
+        W = 300 + (Also(Show.Music) ? 64 : 0) + (Also(Show.Timer) ? 48 : 0) + (Also(Show.Meeting) ? 62 : 0) + (Also(Show.Listen) ? 30 : 0);
         UIElement left; UIElement mid;
         var right = Row(10);
         switch (_first)
@@ -125,6 +126,8 @@ sealed class CompactView : View
                 if (!Also(Show.Music) && !Also(Show.Timer) && !Also(Show.Meeting)) right.Children.Add(_time);
                 break;
             case Show.Meeting: left = _meet; mid = _meeting; right.Children.Add(_soon); break;
+            // Listening in: the ripple follows the room, and the last thing said shows, so it is plain it is working.
+            case Show.Listen: left = _ear; mid = _heard; right.Children.Add(_since); break;
             case Show.Timer: left = _timer; mid = _focus; right.Children.Add(_left); break;
             default:
                 var song = new DockPanel { LastChildFill = true };
@@ -133,6 +136,7 @@ sealed class CompactView : View
                 left = _cover; mid = song; right.Children.Add(_eq);
                 break;
         }
+        if (Also(Show.Listen)) right.Children.Add(_ear);
         if (Also(Show.Meeting)) right.Children.Add(Tap(_soon, h.OpenPeek));
         if (Also(Show.Timer)) right.Children.Add(Tap(_left, () => h.OpenPanel(Panel.Focus)));
         if (Also(Show.Music)) { right.Children.Add(_eq); right.Children.Add(Tap(_cover, h.OpenPlayer)); }
@@ -148,6 +152,7 @@ sealed class CompactView : View
         var col = Col(10);
         col.HorizontalAlignment = HorizontalAlignment.Center;
         if (_show.HasFlag(Show.Agent)) { col.Children.Add(_dots); _more.HorizontalAlignment = HorizontalAlignment.Center; col.Children.Add(_more); }
+        if (_show.HasFlag(Show.Listen)) col.Children.Add(_ear);
         if (_show.HasFlag(Show.Meeting)) col.Children.Add(Tap(_meet, Host.OpenPeek));
         if (_show.HasFlag(Show.Timer)) col.Children.Add(Tap(_timer, () => Host.OpenPanel(Panel.Focus)));
         if (_show.HasFlag(Show.Music)) { col.Children.Add(_eq); col.Children.Add(Tap(_cover, Host.OpenPlayer)); }
@@ -174,6 +179,7 @@ sealed class CompactView : View
             _more.Text = n > 0 ? "+" + n : "";
             _more.Visibility = n > 0 ? Visibility.Visible : Visibility.Collapsed;
         }
+        if (_show.HasFlag(Show.Listen)) _heard.Text = Host.S.Listen.Latest is { Length: > 0 } said ? said : "Listening in";
         if (_show.HasFlag(Show.Music) && Host.Media.Current is { } m)
         {
             _eq.Tint = m.Tint; _title.Text = m.Title; _artist.Text = m.Artist;
@@ -185,6 +191,7 @@ sealed class CompactView : View
     {
         var now = DateTime.UtcNow;
         if (Top is { } s) _time.Text = Elapsed(s);
+        if (_show.HasFlag(Show.Listen)) _since.Text = Clock(now - Host.S.Listen.Started);
         if (_show.HasFlag(Show.Timer))
         {
             var t = Host.S.Timer;

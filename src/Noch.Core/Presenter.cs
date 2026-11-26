@@ -6,11 +6,11 @@ public enum NotchState { Hidden, Rest, Strip, Compact, Approval, Question, Done,
 public enum Panel { None, Peek, Player, Focus, Shelf }
 
 /// What the bar is carrying.
-[Flags] public enum Show { None = 0, Agent = 1, Music = 2, Timer = 4, Meeting = 8 }
+[Flags] public enum Show { None = 0, Agent = 1, Music = 2, Timer = 4, Meeting = 8, Listen = 16 }
 
-public sealed record Scene(bool Fullscreen, bool Covered, Panel Panel, bool Music = false, bool Timer = false, bool Meeting = false, Notice? Notice = null, bool Quiet = false, bool Voice = false)
+public sealed record Scene(bool Fullscreen, bool Covered, Panel Panel, bool Music = false, bool Timer = false, bool Meeting = false, Notice? Notice = null, bool Quiet = false, bool Voice = false, bool Listening = false)
 {
-    public Show Bar(bool agents) => (agents ? Show.Agent : 0) | (Music ? Show.Music : 0) | (Timer ? Show.Timer : 0) | (Meeting ? Show.Meeting : 0);
+    public Show Bar(bool agents) => (agents ? Show.Agent : 0) | (Music ? Show.Music : 0) | (Timer ? Show.Timer : 0) | (Meeting ? Show.Meeting : 0) | (Listening ? Show.Listen : 0);
 }
 
 /// Decides the one thing the notch shows right now.

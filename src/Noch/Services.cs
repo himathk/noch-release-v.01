@@ -28,6 +28,7 @@ sealed class AppServices
     public required NotificationService Notifications { get; init; }
     public required Sounds Sounds { get; init; }
     public required VoiceService Voice { get; init; }
+    public required ListenIn Listen { get; init; }
     public Action OpenSettings { get; set; } = () => { };
 
     /// Opens a web address or file the way Windows would. Anything else is ignored.

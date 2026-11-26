@@ -33,7 +33,8 @@ static class Shots
             var settings = new Settings();
             var notices = new Notices();
             var sounds = new Sounds(settings);
-            var services = new AppServices { Settings = settings, Hub = hub, Media = media, Notices = notices, Sounds = sounds, Usage = new Usage(), Timer = new FocusTimer(settings.Focus), Shelf = new Shelf(), Stats = new Stats(), Calendar = new CalendarService(settings, notices, sounds), Notifications = new NotificationService(settings, notices), Voice = new VoiceService(new Settings { Voice = false }) };
+            var quiet = new VoiceService(new Settings { Voice = false });
+            var services = new AppServices { Settings = settings, Hub = hub, Media = media, Notices = notices, Sounds = sounds, Usage = new Usage(), Timer = new FocusTimer(settings.Focus), Shelf = new Shelf(), Stats = new Stats(), Calendar = new CalendarService(settings, notices, sounds), Notifications = new NotificationService(settings, notices), Voice = quiet, Listen = new ListenIn(settings, quiet) };
             var w = new NotchWindow(services) { Left = -4000, Top = -4000, WindowStartupLocation = WindowStartupLocation.Manual };
             w.Show();
             w.Left = -4000;

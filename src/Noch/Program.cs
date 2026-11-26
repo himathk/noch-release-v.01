@@ -99,11 +99,12 @@ static class Program
             _media = new MediaService();
             var notices = new Notices();
             var sounds = new Sounds(_settings);
+            var voice = new VoiceService(_settings);
             _s = new AppServices
             {
                 Settings = _settings, Hub = _hub, Media = _media, Notices = notices, Sounds = sounds, Usage = new Usage(), Timer = new FocusTimer(_settings.Focus),
                 Shelf = new Shelf(Path.Combine(Settings.Folder, "shelf.json")), Stats = new Stats(Path.Combine(Settings.Folder, "stats.json")),
-                Calendar = new CalendarService(_settings, notices, sounds), Notifications = new NotificationService(_settings, notices), Voice = new VoiceService(_settings), OpenSettings = OpenSettings
+                Calendar = new CalendarService(_settings, notices, sounds), Notifications = new NotificationService(_settings, notices), Voice = voice, Listen = new ListenIn(_settings, voice), OpenSettings = OpenSettings
             };
             _hub.Hidden = Assistant.Folder;
             _server = new HookServer(_hub, Name == "Noch" ? null : "noch-dev", _s.Usage);
@@ -125,7 +126,20 @@ static class Program
             {
                 var step = 0;
                 var mode = Environment.GetEnvironmentVariable("NOCH_DEMO");
-                if (mode == "voice" && Environment.GetEnvironmentVariable("NOCH_VOICE_FILE") is { } wav)
+                if (mode == "listen" && Environment.GetEnvironmentVariable("NOCH_VOICE_FILE") is { } meeting)
+                {
+                    var go = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+                    go.Tick += (_, _) => { go.Stop(); _s.Listen.DemoStart(meeting); };
+                    go.Start();
+                    if (Environment.GetEnvironmentVariable("NOCH_VOICE_SHOTS") is { } dir)
+                    {
+                        var n = 0;
+                        var shoot = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(700) };
+                        shoot.Tick += (_, _) => { Shots.Save(_window, Path.Combine(dir, $"listen-{n++:000}-{_window.State}-{_s.Voice.Now}.png")); if (n > 200) shoot.Stop(); };
+                        shoot.Start();
+                    }
+                }
+                else if (mode == "voice" && Environment.GetEnvironmentVariable("NOCH_VOICE_FILE") is { } wav)
                 {
                     var talk = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
                     talk.Tick += (_, _) => { talk.Stop(); _s.Voice.DemoTalk(wav); };
@@ -287,6 +301,7 @@ static class Program
                 menu.Items.Add(new Forms.ToolStripSeparator());
                 Item("Focus timer", () => _window!.OpenPinned(Noch.Core.Panel.Focus));
                 Item("Shelf", () => _window!.OpenPinned(Noch.Core.Panel.Shelf));
+                Item("Listen in on a meeting   Ctrl Alt L", () => _s!.Listen.Toggle(), _s!.Listen.On, _settings.Voice);
                 menu.Items.Add(new Forms.ToolStripSeparator());
                 Item("Connect Claude Code", () => Toggle(_claude, "Claude Code"), _claude.Connected, _claude.AgentInstalled);
                 Item("Connect Cursor", () => Toggle(_cursor, "Cursor"), _cursor.Connected, _cursor.AgentInstalled);
