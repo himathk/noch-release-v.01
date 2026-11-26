@@ -10,6 +10,8 @@ sealed class Settings
     public bool Welcomed { get; set; }
     /// Which edge or corner it was dropped on.
     public string? Dock { get; set; }
+    /// The screen it was dropped on, or empty for the main screen.
+    public string? Screen { get; set; }
     public bool Dragged { get; set; }
     public string? LastVersion { get; set; }
     public bool Sounds { get; set; } = true;

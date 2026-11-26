@@ -13,7 +13,7 @@ sealed class Bubble
 {
     const double Radius = 30, Break = 108, Grab = 74;
     public readonly Spring X = new(0), Y = new(0), R = new(16), Wobble = new(0), Base = new(0), Recoil = new(0);
-    readonly Size _area;
+    Size _area;
     Side _recoilSide;
     double _recoilAt, _angle, _landing;
     double _offX, _offY;
@@ -22,6 +22,8 @@ sealed class Bubble
     public Noch.Core.Dock? Target { get; private set; }
     public bool Landed { get; private set; }
     public bool Motion { get; init; } = true;
+    /// Sides that lead onto another screen. They let the bubble pass instead of catching it.
+    public HashSet<Side> Open { get; set; } = [];
     /// How long the bar is while it melts into the edge.
     public const double Melted = Radius * 2.4;
 
@@ -54,6 +56,19 @@ sealed class Bubble
             Target = Noch.Core.Dock.Nearest(edge.X, edge.Y, _area.Width, _area.Height);
         }
         R.Target = 20;
+    }
+
+    /// Carried onto another screen: the same spot on the desk, now measured in that screen's units.
+    /// `k` turns speeds from the old units into the new ones.
+    public void Cross(Size area, HashSet<Side> open, Point at, double k)
+    {
+        _area = area; Open = open;
+        X.Value = X.Target = at.X; Y.Value = Y.Target = at.Y;
+        X.Velocity *= k; Y.Velocity *= k;
+        // Torn off an edge that is now on the other screen.
+        if (Attached != null && Motion) Wobble.Velocity += 5.5;
+        Attached = null;
+        Recoil.Snap(0);
     }
 
     public void Step(double dt, double px, double py)
@@ -91,7 +106,7 @@ sealed class Bubble
                 if (Motion) Wobble.Velocity += 5.5;
             }
         }
-        else if (Depth(near, X.Value, Y.Value) < Grab)
+        else if (Depth(near, X.Value, Y.Value) < Grab && !Open.Contains(near))
         {
             Attached = near;
             Base.Snap(Along(near, X.Value, Y.Value));
@@ -172,7 +187,7 @@ sealed class Bubble
     /// An edge that is close enough reaches out for the bubble.
     Geometry? Reach(Side s)
     {
-        if (s != Noch.Core.Dock.NearestSide(X.Value, Y.Value, _area.Width, _area.Height)) return null;
+        if (Open.Contains(s) || s != Noch.Core.Dock.NearestSide(X.Value, Y.Value, _area.Width, _area.Height)) return null;
         var d = Depth(s, X.Value, Y.Value);
         var t = Math.Clamp(1 - (d - Grab) / 80, 0, 1);
         return t <= 0 || !Motion ? null : Mound(s, Along(s, X.Value, Y.Value), t * t * 24, 34 + 20 * t);
@@ -219,7 +234,8 @@ sealed class EdgeWindow : GhostWindow
     const double Deep = 200;
     readonly Painter _painter;
     readonly Side _side;
-    double _ox, _oy;
+    double _ox, _oy, _scale = 1;
+    Px _put;
     Bubble? _bubble;
 
     sealed class Painter(EdgeWindow w) : FrameworkElement
@@ -227,14 +243,38 @@ sealed class EdgeWindow : GhostWindow
         protected override void OnRender(DrawingContext dc) => w._bubble?.DrawEdge(dc, w._side, w._ox, w._oy);
     }
 
-    public EdgeWindow(Side side) : base("Noch edge") { _side = side; Content = _painter = new Painter(this); }
+    public EdgeWindow(Side side) : base("Noch edge")
+    {
+        _side = side; Content = _painter = new Painter(this);
+        // Windows resizes a window that lands on a screen with other scaling; put it back.
+        DpiChanged += (_, _) => Dispatcher.BeginInvoke(Apply);
+    }
 
-    public void Cover(Rect area)
+    /// Lies along this side of a screen, sized in real pixels.
+    public void Cover(ScreenInfo s)
     {
         var tall = _side is Side.Left or Side.Right;
-        Width = tall ? Deep : area.Width; Height = tall ? area.Height : Deep;
-        _ox = _side == Side.Right ? area.Width - Deep : 0; _oy = _side == Side.Bottom ? area.Height - Deep : 0;
-        Left = area.Left + _ox; Top = area.Top + _oy;
+        double w = tall ? Deep : s.Width, h = tall ? s.Height : Deep;
+        _ox = _side == Side.Right ? s.Width - Deep : 0; _oy = _side == Side.Bottom ? s.Height - Deep : 0;
+        var (x, y) = s.ToPx(_ox, _oy);
+        _put = new(x, y, x + (int)Math.Ceiling(w * s.Scale), y + (int)Math.Ceiling(h * s.Scale));
+        _scale = s.Scale;
+        new WindowInteropHelper(this).EnsureHandle();
+        Apply();
+    }
+
+    public void Apply()
+    {
+        if (Hwnd == IntPtr.Zero) return;
+        Native.Put(Hwnd, _put.Left, _put.Top, _put.Width, _put.Height);
+        _painter.RenderTransform = Fit(this, _scale);
+    }
+
+    /// Draws in the screen's units even while the window still has the old screen's scaling.
+    public static Transform Fit(Visual v, double scale)
+    {
+        var k = scale / VisualTreeHelper.GetDpi(v).DpiScaleX;
+        return Math.Abs(k - 1) < .001 ? Transform.Identity : new ScaleTransform(k, k);
     }
 
     public void Draw(Bubble? b) { _bubble = b; _painter.InvalidateVisual(); }
@@ -247,8 +287,6 @@ sealed class BallWindow : GhostWindow
     readonly DotMatrix _dots = new(Dots.Idle, 1.35);
     readonly Painter _painter;
     readonly Bubble _bubble;
-    readonly Rect _area;
-    readonly double _scale;
     double _ox, _oy;
 
     sealed class Painter(BallWindow w) : Canvas
@@ -256,25 +294,32 @@ sealed class BallWindow : GhostWindow
         protected override void OnRender(DrawingContext dc) => w._bubble.DrawBall(dc, w._ox, w._oy);
     }
 
-    public BallWindow(Bubble bubble, Rect area, double scale, Dots dots, Color tint) : base("Noch drag")
+    public BallWindow(Bubble bubble, ScreenInfo screen, Dots dots, Color tint) : base("Noch drag")
     {
-        _bubble = bubble; _area = area; _scale = scale;
+        _bubble = bubble; Screen = screen;
         Width = Height = Span;
         _dots.Kind = dots; _dots.Tint = tint; _dots.Opacity = 0;
         _painter = new Painter(this);
         _painter.Children.Add(_dots);
         Content = _painter;
-        Left = area.Left + bubble.X.Value - Span / 2; Top = area.Top + bubble.Y.Value - Span / 2;
+        new WindowInteropHelper(this).EnsureHandle();
+        Follow(0);
     }
 
     public Dots Kind { set => _dots.Kind = value; }
+    /// The screen the bubble's position is measured on.
+    public ScreenInfo Screen { get; set; }
 
     public void Follow(double age)
     {
+        var s = Screen;
+        var own = VisualTreeHelper.GetDpi(this).DpiScaleX;
         // Whole pixels for the window; the fraction is drawn inside it.
-        var px = Math.Round((_area.Left + _bubble.X.Value - Span / 2) * _scale); var py = Math.Round((_area.Top + _bubble.Y.Value - Span / 2) * _scale);
-        Native.Move(Hwnd, (int)px, (int)py);
-        _ox = px / _scale - _area.Left; _oy = py / _scale - _area.Top;
+        var px = (int)Math.Round(s.Work.Left + _bubble.X.Value * s.Scale - Span * own / 2);
+        var py = (int)Math.Round(s.Work.Top + _bubble.Y.Value * s.Scale - Span * own / 2);
+        Native.Move(Hwnd, px, py);
+        (_ox, _oy) = s.ToArea(px, py);
+        _painter.RenderTransform = EdgeWindow.Fit(this, s.Scale);
         _dots.Opacity = Math.Clamp((age - .08) / .14, 0, 1) * Math.Clamp((_bubble.R.Value - 19) / 6, 0, 1);
         Canvas.SetLeft(_dots, _bubble.X.Value - _ox - _dots.Width / 2); Canvas.SetTop(_dots, _bubble.Y.Value - _oy - _dots.Height / 2);
         _painter.InvalidateVisual();
@@ -288,17 +333,25 @@ sealed class DragScene
     static int _shown;
     readonly BallWindow _ball;
     public Bubble Bubble { get; }
+    public ScreenInfo Screen { get; private set; }
     public Dots Kind { set => _ball.Kind = value; }
 
-    public DragScene(Bubble bubble, Rect area, double scale, Dots dots, Color tint)
+    public DragScene(Bubble bubble, ScreenInfo screen, Dots dots, Color tint)
     {
-        Bubble = bubble;
+        Bubble = bubble; Screen = screen;
         _edges ??= [new(Side.Top), new(Side.Bottom), new(Side.Left), new(Side.Right)];
         _shown++;
-        foreach (var e in _edges) { e.Cover(area); e.Draw(bubble); e.Show(); }
-        _ball = new BallWindow(bubble, area, scale, dots, tint);
+        foreach (var e in _edges) { e.Cover(screen); e.Draw(bubble); e.Show(); e.Apply(); }
+        _ball = new BallWindow(bubble, screen, dots, tint);
         _ball.Show();
         _ball.Follow(0);
+    }
+
+    /// The edges move to the screen it was carried onto.
+    public void MoveTo(ScreenInfo s)
+    {
+        Screen = s; _ball.Screen = s;
+        foreach (var e in _edges!) e.Cover(s);
     }
 
     public void Draw(double age)

@@ -36,7 +36,7 @@ Open it from anywhere with `Ctrl Alt .`, and find everything else in **Settings*
 
 **It stays out of the way.** Over a maximised window it shrinks to a thin strip that clicks pass through, so your tabs stay usable. Rest the pointer against the top edge to open it. In fullscreen it hides. It never takes keyboard focus unless you choose to type an answer, and its buttons ignore clicks for the first 0.4 seconds so nothing is approved by accident.
 
-**Put it anywhere.** Drag it off the edge and it stretches, snaps free into a bubble, and settles on whichever edge or corner you drop it near. On the left and right edges the bar stands upright. It remembers its place, and **Move back to the top** in the tray menu brings it home.
+**Put it anywhere.** Drag it off the edge and it stretches, snaps free into a bubble, and settles on whichever edge or corner you drop it near. On the left and right edges the bar stands upright. With more than one screen, carry it over to another screen and drop it there. It remembers its place. If that screen is unplugged it waits on the main screen and goes back when the screen returns. **Move back to the top of the main screen** in the tray menu brings it home.
 
 ### Supported agents
 

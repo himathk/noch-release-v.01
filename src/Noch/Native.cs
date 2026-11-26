@@ -14,7 +14,12 @@ static class Native
 
     [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X, Y; }
     [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
-    [StructLayout(LayoutKind.Sequential)] struct MONITORINFO { public int cbSize; public RECT rcMonitor, rcWork; public int dwFlags; }
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)] struct MONITORINFO
+    {
+        public int cbSize; public RECT rcMonitor, rcWork; public int dwFlags;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string szDevice;
+    }
+    delegate bool MonitorProc(IntPtr m, IntPtr dc, IntPtr r, IntPtr l);
 
     [DllImport("user32")] public static extern int GetWindowLong(IntPtr h, int i);
     [DllImport("user32")] public static extern int SetWindowLong(IntPtr h, int i, int v);
@@ -32,8 +37,9 @@ static class Native
     [DllImport("user32", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
     [DllImport("user32")] static extern bool SetForegroundWindow(IntPtr h);
     [DllImport("user32")] static extern bool ShowWindow(IntPtr h, int cmd);
-    [DllImport("user32")] static extern IntPtr MonitorFromPoint(POINT p, uint flags);
-    [DllImport("user32")] static extern bool GetMonitorInfo(IntPtr m, ref MONITORINFO i);
+    [DllImport("user32")] static extern bool EnumDisplayMonitors(IntPtr dc, IntPtr clip, MonitorProc cb, IntPtr l);
+    [DllImport("user32", CharSet = CharSet.Unicode)] static extern bool GetMonitorInfo(IntPtr m, ref MONITORINFO i);
+    [DllImport("shcore")] static extern int GetDpiForMonitor(IntPtr m, int type, out uint x, out uint y);
     [DllImport("dwmapi")] static extern int DwmGetWindowAttribute(IntPtr h, int attr, out int v, int size);
     [DllImport("kernel32", SetLastError = true)] static extern IntPtr OpenProcess(uint access, bool inherit, int pid);
     [DllImport("kernel32")] static extern bool GetExitCodeProcess(IntPtr h, out uint code);
@@ -70,17 +76,30 @@ static class Native
         try { return !GetExitCodeProcess(h, out var code) || code == 259; } finally { CloseHandle(h); }
     }
 
-    public static RECT PrimaryMonitor()
+    /// Every monitor, in real pixels, with its own scaling.
+    public static List<Core.ScreenInfo> Screens()
     {
-        var i = new MONITORINFO { cbSize = Marshal.SizeOf<MONITORINFO>() };
-        GetMonitorInfo(MonitorFromPoint(default, 1), ref i);
-        return i.rcMonitor;
+        var list = new List<Core.ScreenInfo>();
+        EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero, (m, _, _, _) =>
+        {
+            var i = new MONITORINFO { cbSize = Marshal.SizeOf<MONITORINFO>() };
+            if (!GetMonitorInfo(m, ref i)) return true;
+            var dpi = GetDpiForMonitor(m, 0, out var x, out _) == 0 && x > 0 ? x : 96u;
+            static Core.Px P(RECT r) => new(r.Left, r.Top, r.Right, r.Bottom);
+            list.Add(new(i.szDevice ?? "", P(i.rcMonitor), P(i.rcWork), dpi / 96.0, (i.dwFlags & 1) != 0));
+            return true;
+        }, IntPtr.Zero);
+        // Never empty, even in the moment a display is being switched over.
+        if (list.Count == 0) list.Add(new("", new(0, 0, 1920, 1080), new(0, 0, 1920, 1080), 1, true));
+        return list;
     }
 
-    /// What lies under a point: nothing, a normal window, or something fullscreen.
-    public static (bool Covered, bool Fullscreen) Probe(IntPtr self, int cx, int cy)
+    /// Moves and sizes a window in real pixels, which stays right across screens with different scaling.
+    public static void Put(IntPtr h, int x, int y, int w, int hh) => SetWindowPos(h, IntPtr.Zero, x, y, w, hh, 0x4 | 0x10);
+
+    /// What lies under a point on monitor `m`: nothing, a normal window, or something fullscreen.
+    public static (bool Covered, bool Fullscreen) Probe(IntPtr self, int cx, int cy, Core.Px m)
     {
-        var m = PrimaryMonitor();
         var result = (false, false);
         var cls = new StringBuilder(64);
         EnumWindows((h, _) =>

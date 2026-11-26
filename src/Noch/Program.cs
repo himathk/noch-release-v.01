@@ -123,19 +123,35 @@ static class Program
             if (Environment.GetEnvironmentVariable("NOCH_DEMO") is { Length: > 0 })
             {
                 var step = 0;
-                var snap = Environment.GetEnvironmentVariable("NOCH_DEMO") == "snap";
+                var mode = Environment.GetEnvironmentVariable("NOCH_DEMO");
+                bool snap = mode == "snap", across = mode is "screens" or "shared";
                 var demo = new DispatcherTimer { Interval = TimeSpan.FromSeconds(snap ? 2 : 3.5) };
                 demo.Tick += (_, _) =>
                 {
-                    double w = SystemParameters.WorkArea.Width, h = SystemParameters.WorkArea.Height;
+                    var screens = Native.Screens();
+                    var main = Screens.Pick(screens, null);
+                    double w = main.Width, h = main.Height;
+                    // Points on a screen, in its own units, turned into real pixels.
+                    static (double, double, double) On(ScreenInfo s, double t, double x, double y) { var p = s.ToPx(x, y); return (t, p.X, p.Y); }
+                    (double, double, double) At(double t, double x, double y) => On(main, t, x, y);
                     // Hard, fast pulls off the same spot, to shake out drawing that lags behind.
-                    if (snap) { _window.DemoDrag((0, w / 4, 18), (.16, w / 4, 420 + step++ % 3 * 60), (.5, w / 4, 480), (.9, w / 4, 20)); return; }
+                    if (snap) { _window.DemoDrag(At(0, w / 4, 18), At(.16, w / 4, 420 + step++ % 3 * 60), At(.5, w / 4, 480), At(.9, w / 4, 20)); return; }
+                    if (across)
+                    {
+                        // Over to the other screen's top, then home again.
+                        if (screens.FirstOrDefault(s => !s.Primary) is not { } o) { demo.Stop(); return; }
+                        // From the edge the two screens share, straight through it.
+                        if (mode == "shared") { if (step++ == 0) _window.DemoDrag(At(0, w - 10, h / 2), At(.3, w - 2, h / 2 + 20), On(o, .8, 300, h / 2), On(o, 1.3, 300, 30)); return; }
+                        if (step++ % 2 == 0) _window.DemoDrag(At(0, w / 2, 18), At(.4, w / 2, 260), At(.9, w - 40, 300), On(o, 1.4, o.Width * .3, 260), On(o, 1.8, o.Width * .3, 30));
+                        else _window.DemoDrag(On(o, 0, o.Width * .3, 18), On(o, .4, o.Width * .3, 260), On(o, .9, 40, 300), At(1.4, w / 2, 260), At(1.8, w / 2, 30));
+                        return;
+                    }
                     switch (step++)
                     {
-                        case 0: _window.DemoDrag((0, w / 2, 18), (.5, w / 2, 260), (1.1, w - 300, 500), (1.4, w - 60, 520)); break;
-                        case 1: _window.DemoDrag((0, w - 20, 520), (.5, w - 260, 620), (1.0, w / 2, h - 300), (1.3, w / 2 + 30, h - 60)); break;
-                        case 2: _window.DemoDrag((0, w / 2, h - 18), (.4, w / 2, h - 220), (1.0, 300, 300), (1.3, 40, 30)); break;
-                        case 3: _window.DemoDrag((0, 150, 18), (.4, 200, 80)); break; // not far enough: springs back
+                        case 0: _window.DemoDrag(At(0, w / 2, 18), At(.5, w / 2, 260), At(1.1, w - 300, 500), At(1.4, w - 60, 520)); break;
+                        case 1: _window.DemoDrag(At(0, w - 20, 520), At(.5, w - 260, 620), At(1.0, w / 2, h - 300), At(1.3, w / 2 + 30, h - 60)); break;
+                        case 2: _window.DemoDrag(At(0, w / 2, h - 18), At(.4, w / 2, h - 220), At(1.0, 300, 300), At(1.3, 40, 30)); break;
+                        case 3: _window.DemoDrag(At(0, 150, 18), At(.4, 200, 80)); break; // not far enough: springs back
                         case 4: demo.Stop(); break;
                     }
                 };
@@ -260,7 +276,7 @@ static class Program
                 menu.Items.Add(new Forms.ToolStripSeparator());
                 Item("Start with Windows", () => Settings.StartsWithWindows = !Settings.StartsWithWindows, Settings.StartsWithWindows);
                 Item("Show the full bar over windows", () => { _settings.AlwaysFull = !_settings.AlwaysFull; _settings.Save(); _window!.Sync(); }, _settings.AlwaysFull);
-                Item("Move back to the top", () => _window!.BackToTop(), enabled: _window!.Moved);
+                Item("Move back to the top of the main screen", () => _window!.BackToTop(), enabled: _window!.Moved);
                 Item("Settings…", OpenSettings);
                 menu.Items.Add(new Forms.ToolStripSeparator());
                 if (_ready != null) Item("Restart to update", () => _updates!.ApplyUpdatesAndRestart(_ready));

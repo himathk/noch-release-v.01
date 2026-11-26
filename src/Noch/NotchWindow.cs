@@ -25,7 +25,9 @@ sealed class NotchWindow : Window, IHost
     Panel _panel;
     bool _covered, _fullscreen, _hotkeys, _typing, _growing, _quiet, _bounce;
     DateTime _dwell = DateTime.MaxValue, _outside = DateTime.MaxValue, _armAt = DateTime.MaxValue, _lastFrame, _lastProbe, _lastSweep, _pinnedUntil;
-    Rect _area;
+    Size _area;
+    List<ScreenInfo> _screens;
+    ScreenInfo _screen;
 
     public AppServices S { get; }
     public AgentHub Hub => S.Hub;
@@ -46,6 +48,7 @@ sealed class NotchWindow : Window, IHost
         Resources.Add(typeof(ScrollBar), Theme.ScrollBar);
         _shell.Width = Width; _shell.Height = Height;
         _shell.Dock = Dock.Parse(_settings.Dock);
+        _screens = Native.Screens(); _screen = Screens.Pick(_screens, _settings.Screen);
         Content = _shell;
 
         Hub.Changed += () => Dispatcher.BeginInvoke(Sync);
@@ -68,8 +71,9 @@ sealed class NotchWindow : Window, IHost
         _shell.DragEnter += OnDragOver; _shell.DragOver += OnDragOver;
         _shell.DragLeave += (_, _) => { if (_view is ShelfView s) s.Over = false; };
         _shell.Drop += OnDrop;
-        SystemEvents.DisplaySettingsChanged += (_, _) => Dispatcher.BeginInvoke(Place);
-        DpiChanged += (_, _) => Dispatcher.BeginInvoke(Place);
+        SystemEvents.DisplaySettingsChanged += (_, _) => Dispatcher.BeginInvoke(() => { if (_drag is null) { Place(); Sync(); } });
+        // Landing on a screen with other scaling resizes the window, so it is put back in its place.
+        DpiChanged += (_, _) => Dispatcher.BeginInvoke(() => Place());
     }
 
     bool Hoverable => State is NotchState.Compact;
@@ -86,18 +90,22 @@ sealed class NotchWindow : Window, IHost
         Sync();
     }
 
-    /// Puts the window where everything the notch can grow into fits inside it.
-    void Place()
+    /// Puts the window where everything the notch can grow into fits inside it, on the screen it was left on.
+    void Place(List<ScreenInfo>? screens = null)
     {
         if (_hwnd == IntPtr.Zero) return;
-        _area = SystemParameters.WorkArea;
+        _screens = screens ?? Native.Screens();
+        _screen = Screens.Pick(_screens, _settings.Screen);
+        _area = new Size(_screen.Width, _screen.Height);
         var d = _shell.Dock;
         var x = d.Side switch { Side.Left => 0, Side.Right => _area.Width - Width, _ => Math.Clamp(d.Along * _area.Width - Width / 2, 0, Math.Max(0, _area.Width - Width)) };
         var y = d.Side switch { Side.Top => 0, Side.Bottom => _area.Height - Height, _ => Math.Clamp(d.Along * _area.Height - Height / 2, 0, Math.Max(0, _area.Height - Height)) };
-        x = Math.Round(x); y = Math.Round(y);
-        Left = _area.Left + x; Top = _area.Top + y;
-        _shell.Area = new Size(_area.Width, _area.Height);
-        _shell.Origin = new Point(x, y);
+        // In real pixels: a window's own Left and Top go wrong between screens with different scaling.
+        var (px, py) = _screen.ToPx(Math.Round(x), Math.Round(y));
+        Native.Move(_hwnd, px, py);
+        _shell.Area = _area;
+        var (ox, oy) = _screen.ToArea(px, py);
+        _shell.Origin = new Point(ox, oy);
         Retarget();
         _shell.At.Snap(_shell.At.Target);
         Native.KeepOnTop(_hwnd);
@@ -310,7 +318,7 @@ sealed class NotchWindow : Window, IHost
     /// Stands in for the mouse in debug demos.
     Func<(double X, double Y, bool Down)>? PointerScript;
 
-    /// Carries the notch along a path, then lets go, without touching the real mouse.
+    /// Carries the notch along a path in real pixels, then lets go, without touching the real mouse.
     internal void DemoDrag(params (double T, double X, double Y)[] path)
     {
         var start = DateTime.UtcNow;
@@ -331,14 +339,22 @@ sealed class NotchWindow : Window, IHost
     const Func<(double X, double Y, bool Down)>? PointerScript = null;
 #endif
 
-    double Scale => VisualTreeHelper.GetDpi(this).DpiScaleX;
+    double Scale => _screen.Scale;
 
-    /// Where the pointer is, in screen units, and whether the button is down.
+    /// Where the pointer is in real pixels, and whether the button is down.
+    (int X, int Y, bool Down) PointerPx()
+    {
+        if (PointerScript != null) { var s = PointerScript(); return ((int)Math.Round(s.X), (int)Math.Round(s.Y), s.Down); }
+        Native.GetCursorPos(out var p);
+        return (p.X, p.Y, (Native.GetAsyncKeyState(Native.PrimaryButton) & 0x8000) != 0);
+    }
+
+    /// Where the pointer is, in this screen's units.
     (double X, double Y, bool Down) Pointer()
     {
-        if (PointerScript != null) return PointerScript();
-        Native.GetCursorPos(out var p);
-        return (p.X / Scale - _area.Left, p.Y / Scale - _area.Top, (Native.GetAsyncKeyState(Native.PrimaryButton) & 0x8000) != 0);
+        var p = PointerPx();
+        var (x, y) = _screen.ToArea(p.X, p.Y);
+        return (x, y, p.Down);
     }
 
     void OnPress(object sender, MouseButtonEventArgs e)
@@ -381,8 +397,8 @@ sealed class NotchWindow : Window, IHost
         _panel = Panel.None; _pinnedUntil = default;
         if (!_settings.Dragged) { _settings.Dragged = true; _settings.Save(); }
         var p = Pointer();
-        var bubble = new Bubble(_shell.Dock, _shell.Body(), _shell.Area, p.X, p.Y) { Motion = Motion };
-        _drag = new DragScene(bubble, _area, Scale, BubbleDots, Media.Current?.Tint ?? Theme.MediaColor);
+        var bubble = new Bubble(_shell.Dock, _shell.Body(), _shell.Area, p.X, p.Y) { Motion = Motion, Open = Screens.Open(_screen, _screens) };
+        _drag = new DragScene(bubble, _screen, BubbleDots, Media.Current?.Tint ?? Theme.MediaColor);
         _dragStart = _lastDrag = DateTime.UtcNow;
         // The bar itself melts into the edge it hangs from.
         foreach (var v in _shell.Children.OfType<View>())
@@ -404,11 +420,22 @@ sealed class NotchWindow : Window, IHost
         var dt = Math.Min((now - _lastDrag).TotalSeconds, .05);
         if (dt <= 0 || _drag is null) return;
         _lastDrag = now;
-        var p = Pointer();
+        var p = PointerPx();
         if (!p.Down) _drag.Bubble.Release();
-        _drag.Bubble.Step(dt, p.X, p.Y);
+        // Carried onto another screen: the bubble goes with it.
+        if (_drag.Bubble.Target is null && Screens.At(_screens, p.X, p.Y) is { } there && there != _drag.Screen) Cross(there);
+        var (x, y) = _drag.Screen.ToArea(p.X, p.Y);
+        _drag.Bubble.Step(dt, x, y);
         _drag.Draw((now - _dragStart).TotalSeconds);
         if (_drag.Bubble.Landed) EndDrag(_drag.Bubble.Target!.Value);
+    }
+
+    void Cross(ScreenInfo there)
+    {
+        var from = _drag!.Screen; var b = _drag.Bubble;
+        var (x, y) = there.ToArea(from.Work.Left + b.X.Value * from.Scale, from.Work.Top + b.Y.Value * from.Scale);
+        b.Cross(new Size(there.Width, there.Height), Screens.Open(there, _screens), new Point(x, y), from.Scale / there.Scale);
+        _drag.MoveTo(there);
     }
 
     void EndDrag(Dock dock)
@@ -421,6 +448,8 @@ sealed class NotchWindow : Window, IHost
         var done = _drag!;
         _drag = null;
         _settings.Dock = dock.ToString();
+        // The main screen is kept as "the main screen", so it follows if another one is made main.
+        _settings.Screen = done.Screen.Primary ? null : done.Screen.Name;
         _settings.Save();
         MoveTo(dock);
         done.Close();
@@ -444,10 +473,11 @@ sealed class NotchWindow : Window, IHost
     {
         if (_drag != null) return;
         _settings.Dock = Dock.TopCentre.ToString();
+        _settings.Screen = null;
         _settings.Save();
         MoveTo(Dock.TopCentre);
     }
-    public bool Moved => _shell.Dock != Dock.TopCentre;
+    public bool Moved => _shell.Dock != Dock.TopCentre || !_screen.Primary;
 
     // ---- watching the screen ----
 
@@ -456,7 +486,8 @@ sealed class NotchWindow : Window, IHost
         var now = DateTime.UtcNow;
         _view?.Tick();
         if (_drag is null && _view is { } v && v is not StripView && (Math.Abs(v.DesiredSize.Height - _shell.H.Target) > .5 && v.DesiredSize.Height < Height - 20)) Resize();
-        if (_drag is null && SystemParameters.WorkArea != _area) { Place(); Sync(); }
+        // A screen plugged in or out, a taskbar moved, scaling changed.
+        if (_drag is null && Native.Screens() is var screens && !screens.SequenceEqual(_screens)) { Place(screens); Sync(); }
         if (now - _lastProbe > TimeSpan.FromMilliseconds(700))
         {
             _lastProbe = now;
@@ -464,7 +495,8 @@ sealed class NotchWindow : Window, IHost
             // A point just inside the edge, under the middle of the notch.
             var x = _shell.Dock.Side switch { Side.Left => 12, Side.Right => _area.Width - 12, _ => b.CenterX };
             var y = _shell.Dock.Side switch { Side.Top => 12, Side.Bottom => _area.Height - 12, _ => b.CenterY };
-            var (covered, full) = Native.Probe(_hwnd, (int)((_area.Left + x) * Scale), (int)((_area.Top + y) * Scale));
+            var (px, py) = _screen.ToPx(x, y);
+            var (covered, full) = Native.Probe(_hwnd, px, py, _screen.Bounds);
             if (_drag is null && (covered != _covered || full != _fullscreen)) { _covered = covered; _fullscreen = full; Sync(); Native.KeepOnTop(_hwnd); }
         }
         if (now - _lastSweep > TimeSpan.FromSeconds(1))
@@ -550,10 +582,8 @@ sealed class NotchWindow : Window, IHost
         var p = Pointer();
         var b = _shell.Dock.Place(_shell.W.Target, _shell.H.Target, _area.Width, _area.Height);
         // Against the taskbar there is no screen edge to push into, so the whole strip counts.
-        var limit = _shell.Dock.Side switch
-        {
-            Side.Top => _area.Top <= 0, Side.Left => _area.Left <= 0, Side.Right => _area.Right >= SystemParameters.PrimaryScreenWidth, _ => _area.Bottom >= SystemParameters.PrimaryScreenHeight
-        } ? 1.5 : 10;
+        // So does an edge the pointer carries on past, onto another screen.
+        var limit = Screens.Hard(_screen, _shell.Dock.Side, _screens) ? 1.5 : 10;
         // Holding something over the edge opens the shelf for it, unless it is a window being moved or resized.
         var carrying = p.Down && !Native.MovingWindow();
         var near = (!p.Down || carrying) && b.Contains(p.X, p.Y, 2) && Dock.Depth(_shell.Dock.Side, p.X, p.Y, _area.Width, _area.Height) <= limit;
