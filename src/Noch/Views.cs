@@ -367,11 +367,12 @@ sealed class ToastView : View
         var text = Col(1);
         text.Children.Add(Strong(t.Title)); text.Children.Add(Caption(t.Detail));
         if (t.Body.Length > 0) text.Children.Add(NoticeView.Wrapped(t.Body, 4));
-        var open = NoticeView.Small("Open", () => { h.Focus(t.SessionKey); h.Hub.DismissToast(); });
+        var open = NoticeView.Small("Open", () => { h.Focus(t.SessionKey); h.Hub.DismissToast(); h.Hub.Clear(t.SessionKey); });
         var bar = Bar(new DotMatrix(t.Failed ? Dots.Fail : Dots.Done), text, open);
         if (t.Body.Length > 0) { W = 440; foreach (FrameworkElement e in bar.Children) if (e != text) { e.VerticalAlignment = VerticalAlignment.Top; if (e is DotMatrix) e.Margin = new Thickness(0, 8, 0, 0); } }
         bar.Margin = new Thickness(14, 11, 14, 11);
-        Content = new Border { Background = Brushes.Transparent, Child = bar };
+        // A click anywhere on it puts it away, and takes the agent off the list too.
+        Content = NoticeView.Tappable(h, bar, "Clear", () => { h.Hub.DismissToast(); h.Hub.Clear(t.SessionKey); });
         // Stays while it is being read, and leaves when the pointer does.
         MouseEnter += (_, _) => h.Hub.HoldToast = true;
         MouseLeave += (_, _) => { h.Hub.HoldToast = false; h.Hub.DismissToast(); };
@@ -390,7 +391,7 @@ sealed class PeekView : View
 
     public override void Update()
     {
-        var sessions = Presenter.Ordered(Host.Hub.Sessions).Take(5).ToList();
+        var sessions = Presenter.Ordered(Host.Hub.Sessions.Where(s => !s.Cleared)).Take(5).ToList();
         var m = Host.Media.Current;
         var setup = Host.Setup;
         // Rebuild only when rows come or go; otherwise change the text in place so nothing flickers.
@@ -488,7 +489,8 @@ sealed class PeekView : View
         return Theme.Button(Bar(dots, text, side), $"{s.Project}, {s.Agent}", () =>
         {
             // If it is waiting on an answer, show the card; otherwise go to its window.
-            if (Host.Hub.Pending.Any(p => p.SessionKey == s.Key)) Host.Dismiss(); else { Host.Focus(s.Key); Host.Dismiss(); }
+            // One that has finished has now been seen, so it leaves the list.
+            if (Host.Hub.Pending.Any(p => p.SessionKey == s.Key)) Host.Dismiss(); else { Host.Focus(s.Key); Host.Hub.Clear(s.Key); Host.Dismiss(); }
         }, 14, new Thickness(10, 9, 10, 9), Presenter.NeedsYou(s) ? Raised : Brushes.Transparent, Raised, Hover, stretch: true);
     }
 

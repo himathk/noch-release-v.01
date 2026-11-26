@@ -139,7 +139,11 @@ public sealed class AgentHub
         return null;
     }
 
-    static void Set(AgentSession s, Activity a, string label) { s.Activity = a; s.Label = label; }
+    static void Set(AgentSession s, Activity a, string label)
+    {
+        s.Activity = a; s.Label = label;
+        if (s.Working || Presenter.NeedsYou(s)) s.Cleared = false;
+    }
     static void Begin(AgentSession s) { if (s.Activity is Activity.Idle or Activity.Done or Activity.Failed) s.TurnStarted = DateTime.UtcNow; }
     bool HasPending(string key) => _pending.Any(p => p.SessionKey == key);
 
@@ -197,6 +201,19 @@ public sealed class AgentHub
     /// Hands the decision back to the terminal.
     public void PassOn(PendingRequest p) => Finish(p, "", passedOn: true);
     public void DismissToast() { lock (_gate) _toast = null; Changed?.Invoke(); }
+
+    /// The user has seen it: its finished message goes, and it leaves the list until it does something new.
+    /// One that is working or waiting on an answer stays.
+    public void Clear(string key)
+    {
+        lock (_gate)
+        {
+            if (!_sessions.TryGetValue(key, out var s) || s.Working || Presenter.NeedsYou(s) || HasPending(key)) return;
+            s.Cleared = true;
+            if (_toast?.SessionKey == key) _toast = null;
+        }
+        Changed?.Invoke();
+    }
 
     bool Finish(PendingRequest p, string json, bool passedOn = false)
     {

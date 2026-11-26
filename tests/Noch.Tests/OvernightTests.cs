@@ -296,6 +296,36 @@ public sealed class OvernightTests : IDisposable
         Assert.Equal("echo [U+202E]safe[U+200B][U+001B][2K\nsecond\tline é 😀", hub.Pending[0].Command);
     }
 
+    [Fact]
+    public async Task A_finished_agent_clicked_away_stays_away_until_it_works_again()
+    {
+        var hub = new AgentHub { MinTurnForToast = TimeSpan.Zero };
+        await hub.HandleAsync(E("a", "UserPromptSubmit"));
+        await hub.HandleAsync(E("a", "Stop", "\"last_assistant_message\":\"All done.\""));
+        Assert.NotNull(hub.Toast);
+        hub.Clear("claude:a");
+        Assert.Null(hub.Toast);
+        Assert.True(hub.Sessions[0].Cleared);
+        // Its idle reminder a minute later does not bring it back.
+        await hub.HandleAsync(E("a", "Notification", "\"notification_type\":\"idle_prompt\""));
+        Assert.True(hub.Sessions[0].Cleared);
+        await hub.HandleAsync(E("a", "UserPromptSubmit"));
+        Assert.False(hub.Sessions[0].Cleared);
+    }
+
+    [Fact]
+    public async Task One_that_is_working_or_waiting_cannot_be_cleared()
+    {
+        var hub = new AgentHub();
+        await hub.HandleAsync(E("a", "UserPromptSubmit"));
+        hub.Clear("claude:a");
+        Assert.False(hub.Sessions[0].Cleared);
+        _ = hub.HandleAsync(E("b", "PermissionRequest", "\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"ls\"}"));
+        hub.Clear("claude:b");
+        Assert.DoesNotContain(hub.Sessions, s => s.Cleared);
+        hub.Clear("nobody");
+    }
+
     // ---- what is on screen ----
 
     [Fact]

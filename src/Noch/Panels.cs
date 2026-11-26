@@ -52,8 +52,13 @@ sealed class NoticeView : View
         if (n.ActionLabel != null) right.Children.Add(Small(n.ActionLabel, () => { n.Action?.Invoke(); Done(); }));
         var bar = Bar(left, text, right.Children.Count > 0 ? right : null);
         bar.Margin = new Thickness(14, 11, 14, 11);
-        Content = new Border { Background = Brushes.Transparent, Child = bar };
+        // A click anywhere else on it puts it away.
+        Content = Tappable(h, bar, "Clear", Done);
     }
+
+    /// The whole card answers a click; buttons inside it keep their own. Ignored for its first moment on screen.
+    public static UIElement Tappable(IHost h, UIElement content, string name, Action run) =>
+        Theme.Button(content, name, () => { if (h.Armed) run(); }, 22, new Thickness(0), Brushes.Transparent, Brushes.Transparent, Brushes.Transparent, stretch: true);
 
     DotLevel? _level;
     TextBlock? _percent;

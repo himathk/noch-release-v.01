@@ -25,12 +25,12 @@ Works on Windows 10 (1809 or later) and Windows 11, 64-bit. Noch checks for upda
 | <img src="docs/both.png" width="420" alt="Compact bar"> | **At a glance.** What the busiest agent is doing, and the current track. |
 | <img src="docs/approval.png" width="420" alt="Approval card"> | **Approvals.** See the whole command and answer with a click, or `Ctrl Alt Y` and `Ctrl Alt N`. |
 | <img src="docs/question.png" width="420" alt="Question card"> | **Questions.** Pick an option or type your own answer. |
-| <img src="docs/done.png" width="420" alt="Finished message with a summary"> | **Finished.** What the agent said when it was done, with a soft sound. A warning if two agents edit the same file. |
+| <img src="docs/done.png" width="420" alt="Finished message with a summary"> | **Finished.** What the agent said when it was done, with a soft sound. A warning if two agents edit the same file. Click it once you have read it, and the agent leaves the list until it starts work again. |
 | <img src="docs/player.png" width="420" alt="Player"> | **Now playing.** Spotify, YouTube in a browser, or anything else Windows knows about. Scroll over it to change the volume. |
 | <img src="docs/focus.png" width="420" alt="Focus timer"> | **Focus timer.** Twenty-five dots that go out one by one. While it runs, only what needs you gets through. |
 | <img src="docs/shelf.png" width="420" alt="Shelf with files"> | **Shelf.** Drag files, links or text onto the notch and drag them out again later. It remembers where they are and never moves or copies them. |
 | <img src="docs/meeting.png" width="420" alt="Meeting starting"> | **Meetings.** A countdown from ten minutes before, then a Join button. Needs your calendar's private iCal link. |
-| <img src="docs/notification.png" width="420" alt="Notification from another app"> | **Other apps' notifications.** Off until you turn it on. Mute any app with a click. |
+| <img src="docs/notification.png" width="420" alt="Notification from another app"> | **Other apps' notifications.** Off until you turn it on. Click one to put it away, or mute that app. |
 
 Open it from anywhere with `Ctrl Alt .`, and find everything else in **Settings**, from the gear in the notch or the tray icon.
 

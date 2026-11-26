@@ -72,6 +72,8 @@ public sealed class AgentSession
     /// The last thing it said, in plain words.
     public string LastMessage { get; internal set; } = "";
     internal long LastTicks;
+    /// Put away with a click. It comes back as soon as it starts work or needs you.
+    public bool Cleared { get; internal set; }
     public bool Working => Activity is Activity.Thinking or Activity.Reading or Activity.Searching or Activity.Editing or Activity.Running;
 }
 
